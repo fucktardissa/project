@@ -1,11 +1,11 @@
 --[[
-    Validator & Reporter Script (v7 - Hardcoded Target with Reliable Wait)
+    Validator & Reporter Script (v8 - Robust Error Handling)
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
-local TARGET_EGG_NAME = "festival-rift-3" -- [*] This is now the ONLY egg the script will look for.
+local TARGET_EGG_NAME = "festival-rift-3" 
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
@@ -143,28 +143,38 @@ end
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 
--- [*] MODIFIED: Using WaitForChild for more reliability instead of a fixed wait time.
--- It will wait up to 15 seconds for the specific rift to load in.
-local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 10)
+local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
 
--- [*] MODIFIED: The main check is now simpler. It only checks if the rift was found.
 if riftInstance then
-    print("Target found! Beginning two-part movement sequence.")
-    local riftPosition = riftInstance.CFrame.Position -- Use CFrame.Position for models
-    
-    teleportToClosestPoint(math.floor(riftPosition.Y))
-    
-    local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
-    sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
-    
-    task.wait(3)
-    
-    tweenToTarget(riftPosition)
+    -- [*] MODIFIED: Wrapped the entire success sequence in a protected call (pcall).
+    local success, errorMessage = pcall(function()
+        print("Target found! Beginning two-part movement sequence.")
+        
+        -- [*] MODIFIED: Changed from .CFrame.Position to :GetPivot().Position to prevent crashes.
+        local riftPosition = riftInstance:GetPivot().Position
+        
+        teleportToClosestPoint(math.floor(riftPosition.Y))
+        
+        local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+        sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
+        
+        task.wait(3)
+        
+        tweenToTarget(riftPosition)
 
-    startAutoPressR()
+        startAutoPressR()
+    end)
+
+    -- If the pcall failed, it means an error occurred. Report it as a failure.
+    if not success then
+        warn("An error occurred during movement sequence: " .. tostring(errorMessage))
+        getgenv().autoPressR = false 
+        local failurePayload = {content = "RIFT_SEARCH_FAILED"}
+        sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+    end
     
 else
-    print("Target '" .. TARGET_EGG_NAME .. "' not found after 10 seconds. Sending failure report.")
+    print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
     getgenv().autoPressR = false 
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
