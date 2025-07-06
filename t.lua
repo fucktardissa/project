@@ -1,12 +1,11 @@
 --[[
-    Validator & Reporter Script (v5 - with Post-Tween Lock & Smooth Movement)
+    Validator & Reporter Script (v7 - Hardcoded Target with Reliable Wait)
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
-local TARGET_EGG_NAME = "festival-rift-3"
-local MINIMUM_LUCK_MULTIPLIER = 25
+local TARGET_EGG_NAME = "festival-rift-3" -- [*] This is now the ONLY egg the script will look for.
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
@@ -26,7 +25,6 @@ local RIFT_PATH = workspace.Rendered.Rifts
 -- =============================================
 -- UTILITY FUNCTIONS
 -- =============================================
-
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
@@ -74,7 +72,6 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [*] MODIFIED: The tweening function now includes a 3-second lock at the end.
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -86,12 +83,10 @@ local function tweenToTarget(targetPosition)
 
     if movementConnection then movementConnection:Disconnect() end
 
-    -- Store original state
     local originalGravity = workspace.Gravity
     local originalWalkSpeed = humanoid.WalkSpeed
     local originalJumpPower = humanoid.JumpPower
 
-    -- Disable physics and controls for smooth flight
     workspace.Gravity = 0
     humanoid.WalkSpeed = 0
     humanoid.JumpPower = 0
@@ -113,13 +108,10 @@ local function tweenToTarget(targetPosition)
             print("Movement complete. Arrived at target.")
             print("Locking player in place for 3 seconds to stabilize physics...")
 
-            -- Restore gravity first so the character falls to the ground.
             workspace.Gravity = originalGravity
             
-            -- Wait for 3 seconds while the player is still locked (WalkSpeed is 0).
             task.wait(3)
             
-            -- After waiting, restore full control.
             humanoid.WalkSpeed = originalWalkSpeed
             humanoid.JumpPower = originalJumpPower
             
@@ -127,7 +119,6 @@ local function tweenToTarget(targetPosition)
         end
     end)
     
-    -- Wait for the connection to be disconnected (i.e., all logic inside is finished)
     while movementConnection do
         task.wait()
     end
@@ -151,36 +142,29 @@ end
 -- MAIN EXECUTION
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
-task.wait(10)
 
-local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
-local luckValue = 25
+-- [*] MODIFIED: Using WaitForChild for more reliability instead of a fixed wait time.
+-- It will wait up to 15 seconds for the specific rift to load in.
+local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 10)
 
-if riftInstance and riftInstance:FindFirstChild("Display") then
-    local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
-    if surfaceGui and surfaceGui:FindFirstChild("Icon") and surfaceGui.Icon:FindFirstChild("Luck") then
-        luckValue = tonumber((string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", ""))) or 0
-    end
-end
-
-if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
+-- [*] MODIFIED: The main check is now simpler. It only checks if the rift was found.
+if riftInstance then
     print("Target found! Beginning two-part movement sequence.")
-    local riftPosition = riftInstance.Display.Position
+    local riftPosition = riftInstance.CFrame.Position -- Use CFrame.Position for models
     
     teleportToClosestPoint(math.floor(riftPosition.Y))
     
     local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
     
-    task.wait(1)
+    task.wait(3)
     
     tweenToTarget(riftPosition)
 
-    -- After arriving and stabilizing, start the auto-presser
     startAutoPressR()
     
 else
-    print("Target not found. Sending failure report.")
+    print("Target '" .. TARGET_EGG_NAME .. "' not found after 10 seconds. Sending failure report.")
     getgenv().autoPressR = false 
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
