@@ -1,15 +1,12 @@
 --[[
-    Validator & Reporter Script (Final Version with Smooth Tween)
-    - This script validates if a target egg exists after the game loads.
-    - SUCCESS: If the egg is found, it sends a SUCCESS webhook and initiates the Teleport then Tween movement.
-    - FAILURE: If the egg is NOT found, it sends a FAILED webhook to a different URL.
+    Validator & Reporter Script (FIXED VERSION)
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
 local TARGET_EGG_NAME = "festival-rift-3"
-local MINIMUM_LUCK_MULTIPLIER = 1
+local MINIMUM_LUCK_MULTIPLIER = 25
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
@@ -23,6 +20,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
+local NetworkEvent = ReplicatedStorage:WaitForChild("NetworkOwnershipEvent") -- FIXED: Reference to our new RemoteEvent
 
 -- =============================================
 -- UTILITY FUNCTIONS
@@ -64,17 +62,25 @@ local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
     if not humanoidRootPart then return end
+
     print("Part 2: Preparing to tween to final coordinates...")
-    humanoidRootPart:SetNetworkOwner(LocalPlayer)
+
+    -- FIXED: Instead of setting network owner directly, we ask the server.
+    NetworkEvent:FireServer("Take")
+
     local distance = (humanoidRootPart.Position - targetPosition).Magnitude
     local duration = distance / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local goal = {CFrame = CFrame.new(targetPosition)}
     local tween = TweenService:Create(humanoidRootPart, tweenInfo, goal)
+    
     tween:Play()
     print("Tween initiated. Estimated travel time: " .. string.format("%.2f", duration) .. " seconds.")
+    
     tween.Completed:Wait()
-    humanoidRootPart:SetNetworkOwner(nil)
+
+    -- FIXED: After tween is done, we ask the server to release ownership.
+    NetworkEvent:FireServer("Release")
     print("Tween completed. Network ownership returned to server.")
 end
 
@@ -83,14 +89,17 @@ end
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 task.wait(10)
+
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
 local luckValue = 0
+
 if riftInstance and riftInstance:FindFirstChild("Display") then
     local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
     if surfaceGui and surfaceGui:FindFirstChild("Icon") and surfaceGui.Icon:FindFirstChild("Luck") then
         luckValue = tonumber((string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", ""))) or 0
     end
 end
+
 if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
     print("Target found! Beginning two-part movement sequence.")
     local riftPosition = riftInstance.Display.Position
@@ -104,4 +113,5 @@ else
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
+
 print("Validator/Reporter Script has completed its run.")
