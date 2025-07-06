@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (with Reliable Webhooks & Advanced Tweening)
+    Validator & Reporter Script (v4 - with Smooth Tween & Auto-Action)
 ]]
 
 -- =============================================
@@ -19,6 +19,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
@@ -26,37 +27,26 @@ local RIFT_PATH = workspace.Rendered.Rifts
 -- UTILITY FUNCTIONS
 -- =============================================
 
--- [*] MODIFIED: This is the new, more robust webhook function with a cooldown and error logging.
+-- [*] MODIFIED: Upgraded the webhook function for better reliability.
 local lastWebhookSendTime = 0
-local WEBHOOK_COOLDOWN = 2 -- Cooldown in seconds between sending webhooks.
+local WEBHOOK_COOLDOWN = 2
 
 local function sendWebhook(targetUrl, payload)
     local now = tick()
     if now - lastWebhookSendTime < WEBHOOK_COOLDOWN then
-        warn("Webhook cooldown active. Skipping report to avoid spam.")
+        warn("Webhook cooldown active. Skipping report.")
         return
     end
-
     if not targetUrl or not string.match(targetUrl, "discord.com/api/webhooks") then
-        warn("Webhook function called with an invalid or missing URL.")
+        warn("Invalid webhook URL.")
         return
     end
-
-    -- Use pcall to safely make the request and capture any errors.
     local success, result = pcall(function()
-        HttpService:RequestAsync({
-            Url = targetUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
-        })
+        HttpService:RequestAsync({ Url = targetUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload) })
     end)
-
     if not success then
-        -- If the request failed, print the error instead of failing silently.
         warn("Webhook failed to send! Error: " .. tostring(result))
     else
-        -- If successful, update the timestamp.
         lastWebhookSendTime = now
         print("Webhook report sent successfully.")
     end
@@ -85,18 +75,27 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
+-- [*] MODIFIED: This tweening function is now much smoother.
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
+    local humanoid = character:WaitForChild("Humanoid")
+    if not humanoidRootPart or not humanoid then return end
 
-    print("Part 2: Preparing to move to final coordinates...")
+    print("Part 2: Preparing smooth movement...")
 
-    if movementConnection then
-        movementConnection:Disconnect()
-        movementConnection = nil
-    end
+    if movementConnection then movementConnection:Disconnect() end
+
+    -- Store original state
+    local originalGravity = workspace.Gravity
+    local originalWalkSpeed = humanoid.WalkSpeed
+    local originalJumpPower = humanoid.JumpPower
+
+    -- Disable physics and controls for smooth flight
+    workspace.Gravity = 0
+    humanoid.WalkSpeed = 0
+    humanoid.JumpPower = 0
 
     local startCFrame = humanoidRootPart.CFrame
     local journeyDistance = (startCFrame.Position - targetPosition).Magnitude
@@ -106,23 +105,47 @@ local function tweenToTarget(targetPosition)
     movementConnection = RunService.RenderStepped:Connect(function()
         local now = tick()
         local alpha = math.min((now - startTime) / duration, 1)
-
         humanoidRootPart.CFrame = startCFrame:Lerp(CFrame.new(targetPosition), alpha)
-
+        
         if alpha >= 1 then
             movementConnection:Disconnect()
             movementConnection = nil
+            
+            -- Restore original state
+            workspace.Gravity = originalGravity
+            humanoid.WalkSpeed = originalWalkSpeed
+            humanoid.JumpPower = originalJumpPower
+            
             print("Movement complete. Arrived at target.")
         end
     end)
+    
+    -- Wait for the connection to be disconnected (i.e., movement is finished)
+    while movementConnection do
+        task.wait()
+    end
 end
 
+-- [+] ADDED: The auto-press 'R' function you requested.
+local function startAutoPressR()
+    print("Starting to auto-press 'R' key...")
+    getgenv().autoPressR = true
+    
+    task.spawn(function()
+        while getgenv().autoPressR do
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+            task.wait()
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+            task.wait()
+        end
+    end)
+end
 
 -- =============================================
 -- MAIN EXECUTION
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
-task.wait(2)
+task.wait(10)
 
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
 local luckValue = 25
@@ -146,8 +169,14 @@ if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
     task.wait(3)
     
     tweenToTarget(riftPosition)
+
+    -- After arriving, start the auto-presser
+    startAutoPressR()
+    
 else
     print("Target not found. Sending failure report.")
+    -- When a search fails, ensure any previous auto-presser is stopped
+    getgenv().autoPressR = false 
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
