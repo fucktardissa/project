@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v8 - Robust Error Handling)
+    Validator & Reporter Script (v9 - Smooth Velocity Movement)
 ]]
 
 -- =============================================
@@ -9,7 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 200 -- Studs per second.
+local TWEEN_SPEED = 150 -- Studs per second. You can adjust this for faster/slower flight.
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -72,56 +72,50 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
+-- [*] MODIFIED: This function is completely rewritten to use Velocity for smooth, reliable movement.
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    local humanoid = character:WaitForChild("Humanoid")
-    if not humanoidRootPart or not humanoid then return end
+    if not humanoidRootPart then return end
 
-    print("Part 2: Preparing smooth movement...")
-
+    print("Part 2: Preparing smooth velocity-based movement...")
+    
     if movementConnection then movementConnection:Disconnect() end
 
-    local originalGravity = workspace.Gravity
-    local originalWalkSpeed = humanoid.WalkSpeed
-    local originalJumpPower = humanoid.JumpPower
+    -- This connection will run every physics frame, constantly pushing the player towards the target.
+    movementConnection = RunService.Heartbeat:Connect(function()
+        if not humanoidRootPart.Parent then
+            movementConnection:Disconnect()
+            return
+        end
 
-    workspace.Gravity = 0
-    humanoid.WalkSpeed = 0
-    humanoid.JumpPower = 0
+        local currentPosition = humanoidRootPart.Position
+        local distance = (targetPosition - currentPosition).Magnitude
 
-    local startCFrame = humanoidRootPart.CFrame
-    local journeyDistance = (startCFrame.Position - targetPosition).Magnitude
-    local duration = journeyDistance / TWEEN_SPEED
-    local startTime = tick()
-
-    movementConnection = RunService.RenderStepped:Connect(function()
-        local now = tick()
-        local alpha = math.min((now - startTime) / duration, 1)
-        humanoidRootPart.CFrame = startCFrame:Lerp(CFrame.new(targetPosition), alpha)
-        
-        if alpha >= 1 then
+        -- If we are very close, stop the movement.
+        if distance < 10 then
             movementConnection:Disconnect()
             movementConnection = nil
-            
+            humanoidRootPart.Velocity = Vector3.new(0,0,0) -- Stop all movement
             print("Movement complete. Arrived at target.")
-            print("Locking player in place for 3 seconds to stabilize physics...")
-
-            workspace.Gravity = originalGravity
-            
-            task.wait(3)
-            
-            humanoid.WalkSpeed = originalWalkSpeed
-            humanoid.JumpPower = originalJumpPower
-            
-            print("Player unlocked.")
+            return
         end
+        
+        -- Calculate direction and apply velocity
+        local direction = (targetPosition - currentPosition).Unit
+        humanoidRootPart.Velocity = direction * TWEEN_SPEED
     end)
     
+    -- Wait for the movement to finish before continuing the script
     while movementConnection do
         task.wait()
     end
+
+    -- Lock the player in place to stabilize after arrival
+    print("Locking player in place for 3 seconds to stabilize physics...")
+    task.wait(3)
+    print("Player unlocked.")
 end
 
 local function startAutoPressR()
@@ -146,11 +140,9 @@ print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
 
 if riftInstance then
-    -- [*] MODIFIED: Wrapped the entire success sequence in a protected call (pcall).
     local success, errorMessage = pcall(function()
         print("Target found! Beginning two-part movement sequence.")
         
-        -- [*] MODIFIED: Changed from .CFrame.Position to :GetPivot().Position to prevent crashes.
         local riftPosition = riftInstance:GetPivot().Position
         
         teleportToClosestPoint(math.floor(riftPosition.Y))
@@ -165,7 +157,6 @@ if riftInstance then
         startAutoPressR()
     end)
 
-    -- If the pcall failed, it means an error occurred. Report it as a failure.
     if not success then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
