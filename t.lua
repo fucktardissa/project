@@ -1,9 +1,9 @@
 --[[
-    Validator & "Teleport then Tween" Script
-    - This script validates if a target egg exists.
-    - If found, it executes a two-part movement sequence to avoid anti-cheat detection.
-    - Part 1: Uses the in-game portal system to teleport to the closest major island.
-    - Part 2: Uses TweenService to smoothly move the character from the portal to the egg's final location.
+    Validator & Reporter Script (Complete Version)
+    - This script validates if a target egg exists after the game loads.
+    - SUCCESS: If the egg is found, it teleports/tweens and sends a SUCCESS webhook.
+    - FAILURE: If the egg is NOT found, it sends a FAILED webhook to a different URL,
+      which the external program can then use to trigger a server hop.
 ]]
 
 -- =============================================
@@ -11,9 +11,10 @@
 -- =============================================
 local TARGET_EGG_NAME = "festival-rift-3"
 local MINIMUM_LUCK_MULTIPLIER = 1
-local SUCCESS_WEBHOOK_URL = "YOUR_SUCCESS_WEBHOOK_URL_HERE"
+local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/channels/997084858247565312/1362092446519001319/1391331997397553214"
+local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/channels/997084858247565312/1362092446519001319/1391331997397553214"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 200 -- Studs per second. Adjust if this feels too fast or too slow.
+local TWEEN_SPEED = 50 -- Studs per second.
 
 
 -- =============================================
@@ -40,7 +41,8 @@ local function sendWebhook(targetUrl, payload)
     end
     pcall(function()
         HttpService:RequestAsync({
-            Url = targetUrl, Method = "POST",
+            Url = targetUrl,
+            Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode(payload)
         })
@@ -50,7 +52,6 @@ end
 
 --- Part 1: Finds the closest portal and uses the in-game teleport function.
 local function teleportToClosestPoint(targetHeight)
-    -- A table containing your preset teleport locations and their heights.
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
         {name = "The Void", path = "Workspace.Worlds.The Overworld.Islands.The Void.Island.Portal.Spawn", height = 10135},
@@ -66,7 +67,6 @@ local function teleportToClosestPoint(targetHeight)
             closestPoint = point
         end
     end
-
     if closestPoint then
         print("Part 1: Teleporting to closest portal '" .. closestPoint.name .. "'...")
         local args = {"Teleport", closestPoint.path}
@@ -81,26 +81,13 @@ end
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-
     if not humanoidRootPart then return end
 
     print("Part 2: Preparing to tween to final coordinates...")
-    
     local distance = (humanoidRootPart.Position - targetPosition).Magnitude
-    local duration = distance / TWEEN_SPEED -- Calculate time based on distance and speed.
-
-    -- Create the tweening properties.
-    local tweenInfo = TweenInfo.new(
-        duration,
-        Enum.EasingStyle.Linear, -- A constant speed is best for this.
-        Enum.EasingDirection.Out
-    )
-    
-    local goal = {
-        CFrame = CFrame.new(targetPosition)
-    }
-
-    -- Create and play the tween.
+    local duration = distance / TWEEN_SPEED
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local goal = {CFrame = CFrame.new(targetPosition)}
     local tween = TweenService:Create(humanoidRootPart, tweenInfo, goal)
     tween:Play()
     print("Tween initiated. Estimated travel time: " .. string.format("%.2f", duration) .. " seconds.")
@@ -110,51 +97,33 @@ end
 -- =============================================
 -- MAIN EXECUTION
 -- =============================================
-print("Validator Script Started. Searching for: " .. TARGET_EGG_NAME)
-task.wait(10) -- Wait 10 seconds for all game assets to load.
+print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
+task.wait(5)
 
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
-local luckValue = 0
+local luckValue = 25
 
--- Check if the rift exists and get its luck value.
 if riftInstance and riftInstance:FindFirstChild("Display") then
     local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
     if surfaceGui and surfaceGui:FindFirstChild("Icon") and surfaceGui.Icon:FindFirstChild("Luck") then
-        local numString = string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", "")
-        luckValue = tonumber(numString) or 0
+        luckValue = tonumber(string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", "")) or 0
     end
 end
 
--- Final check: Does the rift exist and meet our minimum luck requirement?
 if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
-    -- SUCCESS! The egg is here and it's valid.
+    -- SUCCESS LOGIC
     print("Target found! Beginning two-part movement sequence.")
-
     local riftPosition = riftInstance.Display.Position
-    local riftHeight = math.floor(riftPosition.Y)
-
-    -- 1. Execute the portal teleport first.
-    teleportToClosestPoint(riftHeight)
-    
-    -- 2. Send the success webhook immediately so you are notified.
-    local successPayload = {
-        embeds = {{
-            title = "✅ EGG FOUND! Movement Started!",
-            description = string.format("Target `%s` located. Initiating Teleport then Tween sequence.", TARGET_EGG_NAME),
-            color = 3066993, -- Green
-            thumbnail = { url = EGG_THUMBNAIL_URL },
-            footer = { text = "Teleport then Tween Script" }
-        }}
-    }
+    teleportToClosestPoint(math.floor(riftPosition.Y))
+    local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
-    
-    -- 3. Wait for the teleport to complete, then start the tween to the final position.
-    task.wait(3) -- Wait a few seconds for the character to load after the portal teleport.
+    task.wait(3)
     tweenToTarget(riftPosition)
-    
 else
-    -- FAILURE: The egg was not found or did not meet the luck requirement.
-    print("Target not found in this server. Script finishing.")
+    -- FAILURE LOGIC
+    print("Target not found. Sending failure report.")
+    local failurePayload = {content = "RIFT_SEARCH_FAILED"}
+    sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
 
-print("Validator Script has completed its run.")
+print("Validator/Reporter Script has completed its run.")
