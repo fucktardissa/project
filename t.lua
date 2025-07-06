@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v10 - No-Collision Movement)
+    Validator & Reporter Script (v11 - Aggressive No-Collision)
 ]]
 
 -- =============================================
@@ -72,19 +72,17 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [+] ADDED: This function toggles the collision of the player's character
+-- [*] MODIFIED: This function now makes ALL parts non-collidable.
 local function setPlayerCollision(canCollide)
     local character = LocalPlayer.Character
     if not character then return end
 
     for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+        if part:IsA("BasePart") then -- Removed the exception for HumanoidRootPart
             part.CanCollide = canCollide
         end
     end
-    print("Player collision set to: " .. tostring(canCollide))
 end
-
 
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
@@ -92,17 +90,17 @@ local function tweenToTarget(targetPosition)
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
     if not humanoidRootPart then return end
 
-    print("Part 2: Preparing smooth velocity-based movement...")
+    print("Part 2: Preparing aggressive no-collision movement...")
     
     if movementConnection then movementConnection:Disconnect() end
 
-    -- [*] MODIFICATION: Turn off collisions before moving
+    -- Turn off collisions before moving
     setPlayerCollision(false)
 
     movementConnection = RunService.Heartbeat:Connect(function()
         if not humanoidRootPart.Parent then
             movementConnection:Disconnect()
-            setPlayerCollision(true) -- Restore collisions if character is destroyed
+            setPlayerCollision(true)
             return
         end
 
@@ -121,11 +119,21 @@ local function tweenToTarget(targetPosition)
         humanoidRootPart.Velocity = direction * TWEEN_SPEED
     end)
     
+    -- [*] ADDED: This new loop runs in parallel to the movement
+    -- and constantly enforces the no-collision state.
+    task.spawn(function()
+        while movementConnection do
+            setPlayerCollision(false)
+            task.wait()
+        end
+    end)
+    
+    -- Wait for the movement to finish
     while movementConnection do
         task.wait()
     end
 
-    -- [*] MODIFICATION: Turn collisions back on after arriving
+    -- Turn collisions back on after arriving
     setPlayerCollision(true)
 
     print("Locking player in place for 3 seconds to stabilize physics...")
