@@ -97,10 +97,10 @@ end
 
 
 -- =============================================
--- MAIN EXECUTION
+-- MAIN EXECUTION (Corrected)
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
-task.wait(5)
+task.wait(10)
 
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
 local luckValue = 25
@@ -108,7 +108,8 @@ local luckValue = 25
 if riftInstance and riftInstance:FindFirstChild("Display") then
     local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
     if surfaceGui and surfaceGui:FindFirstChild("Icon") and surfaceGui.Icon:FindFirstChild("Luck") then
-        luckValue = tonumber(string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", "")) or 0
+        -- This is the corrected line. Note the extra parentheses around string.gsub.
+        luckValue = tonumber((string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", ""))) or 0
     end
 end
 
