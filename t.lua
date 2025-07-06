@@ -126,10 +126,10 @@ end
 -- MAIN EXECUTION
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
-task.wait(10)
+task.wait(5)
 
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
-local luckValue = 0
+local luckValue = 25
 
 if riftInstance and riftInstance:FindFirstChild("Display") then
     local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
