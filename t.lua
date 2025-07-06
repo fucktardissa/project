@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v4 - with Smooth Tween & Auto-Action)
+    Validator & Reporter Script (v5 - with Post-Tween Lock & Smooth Movement)
 ]]
 
 -- =============================================
@@ -27,7 +27,6 @@ local RIFT_PATH = workspace.Rendered.Rifts
 -- UTILITY FUNCTIONS
 -- =============================================
 
--- [*] MODIFIED: Upgraded the webhook function for better reliability.
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
@@ -75,7 +74,7 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [*] MODIFIED: This tweening function is now much smoother.
+-- [*] MODIFIED: The tweening function now includes a 3-second lock at the end.
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -111,22 +110,29 @@ local function tweenToTarget(targetPosition)
             movementConnection:Disconnect()
             movementConnection = nil
             
-            -- Restore original state
+            print("Movement complete. Arrived at target.")
+            print("Locking player in place for 3 seconds to stabilize physics...")
+
+            -- Restore gravity first so the character falls to the ground.
             workspace.Gravity = originalGravity
+            
+            -- Wait for 3 seconds while the player is still locked (WalkSpeed is 0).
+            task.wait(3)
+            
+            -- After waiting, restore full control.
             humanoid.WalkSpeed = originalWalkSpeed
             humanoid.JumpPower = originalJumpPower
             
-            print("Movement complete. Arrived at target.")
+            print("Player unlocked.")
         end
     end)
     
-    -- Wait for the connection to be disconnected (i.e., movement is finished)
+    -- Wait for the connection to be disconnected (i.e., all logic inside is finished)
     while movementConnection do
         task.wait()
     end
 end
 
--- [+] ADDED: The auto-press 'R' function you requested.
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
     getgenv().autoPressR = true
@@ -166,16 +172,15 @@ if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
     local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
     
-    task.wait(3)
+    task.wait(1)
     
     tweenToTarget(riftPosition)
 
-    -- After arriving, start the auto-presser
+    -- After arriving and stabilizing, start the auto-presser
     startAutoPressR()
     
 else
     print("Target not found. Sending failure report.")
-    -- When a search fails, ensure any previous auto-presser is stopped
     getgenv().autoPressR = false 
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
