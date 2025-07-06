@@ -1,9 +1,8 @@
 --[[
-    Validator & Reporter Script (Complete Version)
+    Validator & Reporter Script (Final Version with Smooth Tween)
     - This script validates if a target egg exists after the game loads.
-    - SUCCESS: If the egg is found, it teleports/tweens and sends a SUCCESS webhook.
-    - FAILURE: If the egg is NOT found, it sends a FAILED webhook to a different URL,
-      which the external program can then use to trigger a server hop.
+    - SUCCESS: If the egg is found, it sends a SUCCESS webhook and initiates the Teleport then Tween movement.
+    - FAILURE: If the egg is NOT found, it sends a FAILED webhook to a different URL.
 ]]
 
 -- =============================================
@@ -15,8 +14,6 @@ local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/13913307763892
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local TWEEN_SPEED = 50 -- Studs per second.
-
-
 -- =============================================
 -- SERVICES & REFERENCES
 -- =============================================
@@ -24,35 +21,22 @@ local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
-
 
 -- =============================================
 -- UTILITY FUNCTIONS
 -- =============================================
-
---- Sends a pre-formatted payload to a Discord webhook URL. (Corrected Version)
 local function sendWebhook(targetUrl, payload)
-    -- This check is now more flexible and accepts standard, PTB, and Canary webhook URLs.
     if not targetUrl or not string.match(targetUrl, "discord.com/api/webhooks") then
         warn("Webhook function called with an invalid or missing URL.")
         return
     end
-    
     pcall(function()
-        HttpService:RequestAsync({
-            Url = targetUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
-        })
+        HttpService:RequestAsync({ Url = targetUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload) })
     end)
 end
 
-
---- Part 1: Finds the closest portal and uses the in-game teleport function.
 local function teleportToClosestPoint(targetHeight)
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
@@ -73,48 +57,41 @@ local function teleportToClosestPoint(targetHeight)
         print("Part 1: Teleporting to closest portal '" .. closestPoint.name .. "'...")
         local args = {"Teleport", closestPoint.path}
         ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent:FireServer(unpack(args))
-    else
-        warn("Could not determine the closest teleport point.")
     end
 end
 
-
---- Part 2: Smoothly tweens the character from their current position to a target position.
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
     if not humanoidRootPart then return end
-
     print("Part 2: Preparing to tween to final coordinates...")
+    humanoidRootPart:SetNetworkOwner(LocalPlayer)
     local distance = (humanoidRootPart.Position - targetPosition).Magnitude
     local duration = distance / TWEEN_SPEED
-    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local goal = {CFrame = CFrame.new(targetPosition)}
     local tween = TweenService:Create(humanoidRootPart, tweenInfo, goal)
     tween:Play()
     print("Tween initiated. Estimated travel time: " .. string.format("%.2f", duration) .. " seconds.")
+    tween.Completed:Wait()
+    humanoidRootPart:SetNetworkOwner(nil)
+    print("Tween completed. Network ownership returned to server.")
 end
 
-
 -- =============================================
--- MAIN EXECUTION (Corrected)
+-- MAIN EXECUTION
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 task.wait(10)
-
 local riftInstance = RIFT_PATH:FindFirstChild(TARGET_EGG_NAME)
-local luckValue = 25
-
+local luckValue = 0
 if riftInstance and riftInstance:FindFirstChild("Display") then
     local surfaceGui = riftInstance.Display:FindFirstChild("SurfaceGui")
     if surfaceGui and surfaceGui:FindFirstChild("Icon") and surfaceGui.Icon:FindFirstChild("Luck") then
-        -- This is the corrected line. Note the extra parentheses around string.gsub.
         luckValue = tonumber((string.gsub(surfaceGui.Icon.Luck.Text, "[^%d%.%-]", ""))) or 0
     end
 end
-
 if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
-    -- SUCCESS LOGIC
     print("Target found! Beginning two-part movement sequence.")
     local riftPosition = riftInstance.Display.Position
     teleportToClosestPoint(math.floor(riftPosition.Y))
@@ -123,10 +100,8 @@ if riftInstance and luckValue >= MINIMUM_LUCK_MULTIPLIER then
     task.wait(3)
     tweenToTarget(riftPosition)
 else
-    -- FAILURE LOGIC
     print("Target not found. Sending failure report.")
     local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
-
 print("Validator/Reporter Script has completed its run.")
