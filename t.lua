@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v9 - Smooth Velocity Movement)
+    Validator & Reporter Script (v10 - No-Collision Movement)
 ]]
 
 -- =============================================
@@ -9,7 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 -- Studs per second. You can adjust this for faster/slower flight.
+local TWEEN_SPEED = 150 -- Studs per second.
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -72,7 +72,20 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [*] MODIFIED: This function is completely rewritten to use Velocity for smooth, reliable movement.
+-- [+] ADDED: This function toggles the collision of the player's character
+local function setPlayerCollision(canCollide)
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            part.CanCollide = canCollide
+        end
+    end
+    print("Player collision set to: " .. tostring(canCollide))
+end
+
+
 local movementConnection = nil
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -83,36 +96,38 @@ local function tweenToTarget(targetPosition)
     
     if movementConnection then movementConnection:Disconnect() end
 
-    -- This connection will run every physics frame, constantly pushing the player towards the target.
+    -- [*] MODIFICATION: Turn off collisions before moving
+    setPlayerCollision(false)
+
     movementConnection = RunService.Heartbeat:Connect(function()
         if not humanoidRootPart.Parent then
             movementConnection:Disconnect()
+            setPlayerCollision(true) -- Restore collisions if character is destroyed
             return
         end
 
         local currentPosition = humanoidRootPart.Position
         local distance = (targetPosition - currentPosition).Magnitude
 
-        -- If we are very close, stop the movement.
         if distance < 10 then
             movementConnection:Disconnect()
             movementConnection = nil
-            humanoidRootPart.Velocity = Vector3.new(0,0,0) -- Stop all movement
+            humanoidRootPart.Velocity = Vector3.new(0,0,0)
             print("Movement complete. Arrived at target.")
             return
         end
         
-        -- Calculate direction and apply velocity
         local direction = (targetPosition - currentPosition).Unit
         humanoidRootPart.Velocity = direction * TWEEN_SPEED
     end)
     
-    -- Wait for the movement to finish before continuing the script
     while movementConnection do
         task.wait()
     end
 
-    -- Lock the player in place to stabilize after arrival
+    -- [*] MODIFICATION: Turn collisions back on after arriving
+    setPlayerCollision(true)
+
     print("Locking player in place for 3 seconds to stabilize physics...")
     task.wait(3)
     print("Player unlocked.")
@@ -160,6 +175,7 @@ if riftInstance then
     if not success then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
+        setPlayerCollision(true) -- Ensure collisions are re-enabled on error
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
