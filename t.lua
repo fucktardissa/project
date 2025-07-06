@@ -33,12 +33,14 @@ local RIFT_PATH = workspace.Rendered.Rifts
 -- UTILITY FUNCTIONS
 -- =============================================
 
---- Sends a pre-formatted payload to a Discord webhook URL.
+--- Sends a pre-formatted payload to a Discord webhook URL. (Corrected Version)
 local function sendWebhook(targetUrl, payload)
-    if not targetUrl or not string.find(targetUrl, "https://discord.com/api/webhooks") then
+    -- This check is now more flexible and accepts standard, PTB, and Canary webhook URLs.
+    if not targetUrl or not string.match(targetUrl, "discord.com/api/webhooks") then
         warn("Webhook function called with an invalid or missing URL.")
         return
     end
+    
     pcall(function()
         HttpService:RequestAsync({
             Url = targetUrl,
