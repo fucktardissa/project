@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v18 - Typo Fix)
+    Validator & Reporter Script (v19 - CFrame Movement)
 ]]
 
 -- =============================================
@@ -9,7 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150
+local TWEEN_SPEED = 150 -- This is now studs per second
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -30,24 +30,12 @@ local WEBHOOK_COOLDOWN = 2
 
 local function sendWebhook(targetUrl, payload)
     local now = tick()
-    if now - lastWebhookSendTime < WEBHOOK_COOLDOWN then
-        warn("Webhook cooldown active. Skipping report.")
-        return
-    end
-    if not targetUrl or not string.match(targetUrl, "discord.com/api/webhooks") then
-        warn("Invalid webhook URL.")
-        return
-    end
-    local success, result = pcall(function()
+    if now - lastWebhookSendTime < WEBHOOK_COOLDOWN then return end
+    if not targetUrl or not string.match(targetUrl, "discord.com/api/webhooks") then return end
+    pcall(function()
         HttpService:RequestAsync({ Url = targetUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload) })
-    end)
-    if not success then
-        warn("Webhook failed to send! Error: " .. tostring(result))
-    else
         lastWebhookSendTime = now
-        -- This print statement is commented out to reduce log spam.
-        -- print("Webhook report sent successfully.")
-    end
+    end)
 end
 
 local function teleportToClosestPoint(targetHeight)
@@ -98,7 +86,6 @@ local function findSafeLandingSpot(originalPosition)
     end
 end
 
-
 local function setPlayerCollision(canCollide)
     local character = LocalPlayer.Character
     if not character then return end
@@ -109,42 +96,48 @@ local function setPlayerCollision(canCollide)
     end
 end
 
-local movementConnection = nil
+-- [*] MODIFIED: This function now uses CFrame to move the player, ignoring all physics and obstacles.
 local function executeMovement(humanoidRootPart, targetPosition)
     if not humanoidRootPart or not humanoidRootPart.Parent then return end
-    
+
     setPlayerCollision(false)
+
+    local startCFrame = humanoidRootPart.CFrame
+    local targetCFrame = CFrame.new(targetPosition)
+    local distance = (startCFrame.Position - targetCFrame.Position).Magnitude
     
-    movementConnection = RunService.Heartbeat:Connect(function()
-        if not humanoidRootPart.Parent then
-            movementConnection:Disconnect()
-            setPlayerCollision(true)
-            return
-        end
-        local currentPosition = humanoidRootPart.Position
-        local distance = (targetPosition - currentPosition).Magnitude
-        if distance < 10 then
-            movementConnection:Disconnect()
-            movementConnection = nil
-            humanoidRootPart.Velocity = Vector3.new(0,0,0)
-            return
-        end
-        local direction = (targetPosition - currentPosition).Unit
-        humanoidRootPart.Velocity = direction * TWEEN_SPEED
-    end)
-    
-    task.spawn(function()
-        while movementConnection do
-            setPlayerCollision(false)
-            task.wait()
-        end
-    end)
-    
-    while movementConnection do
-        task.wait()
+    if distance < 1 then 
+        setPlayerCollision(true)
+        return 
     end
+
+    local duration = distance / TWEEN_SPEED
+    local elapsedTime = 0
     
-    setPlayerCollision(true)
+    local connection
+    connection = RunService.Heartbeat:Connect(function(deltaTime)
+        elapsedTime = elapsedTime + deltaTime
+        local alpha = math.min(elapsedTime / duration, 1) -- Progress from 0 to 1
+
+        -- Linearly interpolate the CFrame to move smoothly
+        humanoidRootPart.CFrame = startCFrame:Lerp(targetCFrame, alpha)
+        
+        -- Keep collisions off during movement
+        setPlayerCollision(false)
+
+        -- Check if tween is complete
+        if alpha >= 1 then
+            connection:Disconnect()
+            setPlayerCollision(true)
+        end
+    end)
+    
+    -- Failsafe to disconnect after duration + buffer
+    task.wait(duration + 1)
+    if connection.Connected then
+        connection:Disconnect()
+        setPlayerCollision(true)
+    end
 end
 
 local function tweenToTarget(targetPosition)
@@ -157,7 +150,6 @@ local function tweenToTarget(targetPosition)
     local retryAttempts = 0
     local MAX_RETRIES = 3
     
-    -- [*] FIXED: Corrected the typo from "humanoidRootTpart" to "humanoidRootPart"
     while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 20 do
         if retryAttempts > 0 then
             warn("Player is too far from target after movement. Retrying... (Attempt " .. retryAttempts .. ")")
