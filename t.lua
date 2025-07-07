@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v14 - With Proven Tweening System)
+    Validator & Reporter Script (v15 - Redundant Tweening)
 ]]
 
 -- =============================================
@@ -9,7 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 -- Studs per second.
+local TWEEN_SPEED = 150
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -18,22 +18,13 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
 -- =============================================
--- UTILITY FUNCTIONS & STATE
+-- UTILITY FUNCTIONS
 -- =============================================
-
--- [+] ADDED: Global state controller for the tweening system from BESTVERSION.txt
-local tweenController = {
-    active = false,
-    targetPosition = nil,
-    currentTween = nil
-}
-
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
@@ -81,99 +72,89 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [+] ADDED: Helper functions required by the new tweening system.
-local function cancelCurrentTween()
-    if tweenController.currentTween then
-        pcall(function() tweenController.currentTween:Cancel() end)
-        tweenController.currentTween = nil
-    end
-end
-
-local function resetCharacterState(humanoid, originalState)
-    if humanoid and humanoid.Parent then
-        humanoid.WalkSpeed = originalState.WalkSpeed
-        humanoid.AutoRotate = originalState.AutoRotate
-        humanoid.JumpPower = originalState.JumpPower
-    end
-    workspace.Gravity = originalState.Gravity
-    print("Player state and gravity restored.")
-end
-
-local function createMovementTween(humanoidRootPart, targetPos, speed)
-    local distance = (humanoidRootPart.Position - targetPos).Magnitude
-    local time = distance / math.max(1, speed)
-    return TweenService:Create(
-        humanoidRootPart,
-        TweenInfo.new(time, Enum.EasingStyle.Linear),
-        {CFrame = CFrame.new(targetPos)}
-    )
-end
-
-
--- [*] REPLACED: This is the new, proven tweening function from BESTVERSION.txt
-local function tweenToTarget(targetPosition)
-    cancelCurrentTween() -- Cancel any previous movement
-    tweenController.active = true
-    tweenController.targetPosition = targetPosition
-    
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    local humanoid = character:WaitForChild("Humanoid")
-    if not humanoidRootPart or not humanoid then tweenController.active = false; return end
-
-    print("Part 2: Preparing smooth CFrame movement...")
-
-    local originalState = {
-        WalkSpeed = humanoid.WalkSpeed,
-        AutoRotate = humanoid.AutoRotate,
-        JumpPower = humanoid.JumpPower,
-        Gravity = workspace.Gravity
-    }
-
-    humanoid.WalkSpeed = 0
-    humanoid.AutoRotate = false
-    humanoid.JumpPower = 0
-    workspace.Gravity = 0
-    
-    -- Main movement loop
-    task.spawn(function()
-        while tweenController.active and humanoidRootPart and humanoidRootPart.Parent do
-            local distanceToTarget = (humanoidRootPart.Position - targetPosition).Magnitude
-            if distanceToTarget < 5 then
-                print("Arrived at target.")
-                break 
-            end
-            
-            if not tweenController.currentTween then
-                tweenController.currentTween = createMovementTween(humanoidRootPart, targetPosition, TWEEN_SPEED)
-                tweenController.currentTween:Play()
-            end
-            
-            task.wait(0.1)
+local function setPlayerCollision(canCollide)
+    local character = LocalPlayer.Character
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = canCollide
         end
-        
-        -- Cleanup when loop ends
-        cancelCurrentTween()
-        resetCharacterState(humanoid, originalState)
-        tweenController.active = false
+    end
+end
+
+local movementConnection = nil
+local function executeMovement(humanoidRootPart, targetPosition)
+    if not humanoidRootPart or not humanoidRootPart.Parent then return end
+    
+    setPlayerCollision(false)
+    
+    movementConnection = RunService.Heartbeat:Connect(function()
+        if not humanoidRootPart.Parent then
+            movementConnection:Disconnect()
+            setPlayerCollision(true)
+            return
+        end
+        local currentPosition = humanoidRootPart.Position
+        local distance = (targetPosition - currentPosition).Magnitude
+        if distance < 10 then
+            movementConnection:Disconnect()
+            movementConnection = nil
+            humanoidRootPart.Velocity = Vector3.new(0,0,0)
+            return
+        end
+        local direction = (targetPosition - currentPosition).Unit
+        humanoidRootPart.Velocity = direction * TWEEN_SPEED
     end)
     
-    -- Wait for the movement to complete
-    while tweenController.active do
+    task.spawn(function()
+        while movementConnection do
+            setPlayerCollision(false)
+            task.wait()
+        end
+    end)
+    
+    while movementConnection do
         task.wait()
     end
     
-    -- Post-arrival stabilization
-    print("Locking player in place for 3 seconds...")
+    setPlayerCollision(true)
+end
+
+-- [*] MODIFIED: This function now includes the retry loop you suggested.
+local function tweenToTarget(targetPosition)
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+
+    print("Part 2: Preparing redundant movement...")
+
+    local retryAttempts = 0
+    local MAX_RETRIES = 3
+    
+    -- Loop to ensure the player arrives and stays at the target
+    while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 20 do
+        if retryAttempts > 0 then
+            warn("Player is too far from target after tween. Retrying... (Attempt " .. retryAttempts .. ")")
+        end
+        
+        executeMovement(humanoidRootPart, targetPosition)
+        retryAttempts = retryAttempts + 1
+    end
+    
+    if (humanoidRootPart.Position - targetPosition).Magnitude <= 20 then
+        print("Movement successful. Arrived at target.")
+    else
+        warn("Failed to get player to target position after " .. MAX_RETRIES .. " retries.")
+    end
+
+    print("Locking player in place for 3 seconds to stabilize physics...")
     task.wait(3)
     print("Player unlocked.")
 end
 
-
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
     getgenv().autoPressR = true
-    
     task.spawn(function()
         while getgenv().autoPressR do
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
@@ -206,13 +187,13 @@ if riftInstance then
         task.wait(3)
         
         tweenToTarget(safeTargetPosition)
-
         startAutoPressR()
     end)
 
     if not success then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
+        setPlayerCollision(true)
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
