@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v15 - Redundant Tweening)
+    Validator & Reporter Script (v16 - Raycast Landing)
 ]]
 
 -- =============================================
@@ -72,6 +72,40 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
+-- [*] NEW FUNCTION: Uses raycasting to find a safe spot on top of the ground.
+local function findSafeLandingSpot(originalPosition)
+    print("Finding a safe landing spot using raycasting...")
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    
+    -- Start the ray 100 studs above the target and cast it 200 studs down.
+    local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
+    local rayDirection = Vector3.new(0, -200, 0) 
+
+    -- Set up parameters to ignore the player's own character.
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {character}
+    raycastParams.IgnoreWater = true
+
+    local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+
+    if raycastResult and raycastResult.Instance.CanCollide then
+        -- We hit solid ground. Target a spot slightly above the hit point.
+        -- A 3-stud offset is safe for a character's HumanoidRootPart to not be in the ground.
+        local groundPosition = raycastResult.Position
+        local finalTarget = groundPosition + Vector3.new(0, 3, 0)
+        print("Safe landing spot found at: " .. tostring(finalTarget))
+        return finalTarget
+    else
+        -- Raycast didn't hit anything, or hit a non-collidable part.
+        -- This is unlikely but possible if the egg is floating in open air.
+        -- In this case, we fall back to the original safe position.
+        warn("Raycast failed to find ground. Falling back to original target logic.")
+        return originalPosition + Vector3.new(0, 5, 0)
+    end
+end
+
+
 local function setPlayerCollision(canCollide)
     local character = LocalPlayer.Character
     if not character then return end
@@ -120,7 +154,6 @@ local function executeMovement(humanoidRootPart, targetPosition)
     setPlayerCollision(true)
 end
 
--- [*] MODIFIED: This function now includes the retry loop you suggested.
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
@@ -177,7 +210,9 @@ if riftInstance then
         print("Target found! Beginning two-part movement sequence.")
         
         local riftPosition = riftInstance:GetPivot().Position
-        local safeTargetPosition = riftPosition + Vector3.new(0, 5, 0)
+        
+        -- [*] MODIFIED: Use the new raycasting function to find a truly safe position on top of the island.
+        local safeTargetPosition = findSafeLandingSpot(riftPosition)
         
         teleportToClosestPoint(math.floor(riftPosition.Y))
         
