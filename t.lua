@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v17 - Corrected Raycast Distance)
+    Validator & Reporter Script (v18 - Typo Fix)
 ]]
 
 -- =============================================
@@ -45,7 +45,8 @@ local function sendWebhook(targetUrl, payload)
         warn("Webhook failed to send! Error: " .. tostring(result))
     else
         lastWebhookSendTime = now
-        print("Webhook report sent successfully.")
+        -- This print statement is commented out to reduce log spam.
+        -- print("Webhook report sent successfully.")
     end
 end
 
@@ -77,9 +78,6 @@ local function findSafeLandingSpot(originalPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     
     local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
-    
-    -- [*] FIXED: The raycast distance must be less than 1024. 
-    -- A value of -200 is more than enough to find the ground from 100 studs up.
     local rayDirection = Vector3.new(0, -200, 0) 
 
     local raycastParams = RaycastParams.new()
@@ -159,9 +157,10 @@ local function tweenToTarget(targetPosition)
     local retryAttempts = 0
     local MAX_RETRIES = 3
     
-    while retryAttempts < MAX_RETRIES and (humanoidRootTpart.Position - targetPosition).Magnitude > 20 do
+    -- [*] FIXED: Corrected the typo from "humanoidRootTpart" to "humanoidRootPart"
+    while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 20 do
         if retryAttempts > 0 then
-            warn("Player is too far from target after tween. Retrying... (Attempt " .. retryAttempts .. ")")
+            warn("Player is too far from target after movement. Retrying... (Attempt " .. retryAttempts .. ")")
         end
         
         executeMovement(humanoidRootPart, targetPosition)
@@ -204,7 +203,6 @@ if riftInstance then
         print("Target found! Beginning two-part movement sequence.")
         
         local riftPosition = riftInstance:GetPivot().Position
-        
         local safeTargetPosition = findSafeLandingSpot(riftPosition)
         
         teleportToClosestPoint(math.floor(riftPosition.Y))
