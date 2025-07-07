@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v11 - Aggressive No-Collision)
+    Validator & Reporter Script (v14 - With Proven Tweening System)
 ]]
 
 -- =============================================
@@ -18,13 +18,22 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
 -- =============================================
--- UTILITY FUNCTIONS
+-- UTILITY FUNCTIONS & STATE
 -- =============================================
+
+-- [+] ADDED: Global state controller for the tweening system from BESTVERSION.txt
+local tweenController = {
+    active = false,
+    targetPosition = nil,
+    currentTween = nil
+}
+
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
@@ -72,74 +81,94 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- [*] MODIFIED: This function now makes ALL parts non-collidable.
-local function setPlayerCollision(canCollide)
-    local character = LocalPlayer.Character
-    if not character then return end
-
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then -- Removed the exception for HumanoidRootPart
-            part.CanCollide = canCollide
-        end
+-- [+] ADDED: Helper functions required by the new tweening system.
+local function cancelCurrentTween()
+    if tweenController.currentTween then
+        pcall(function() tweenController.currentTween:Cancel() end)
+        tweenController.currentTween = nil
     end
 end
 
-local movementConnection = nil
+local function resetCharacterState(humanoid, originalState)
+    if humanoid and humanoid.Parent then
+        humanoid.WalkSpeed = originalState.WalkSpeed
+        humanoid.AutoRotate = originalState.AutoRotate
+        humanoid.JumpPower = originalState.JumpPower
+    end
+    workspace.Gravity = originalState.Gravity
+    print("Player state and gravity restored.")
+end
+
+local function createMovementTween(humanoidRootPart, targetPos, speed)
+    local distance = (humanoidRootPart.Position - targetPos).Magnitude
+    local time = distance / math.max(1, speed)
+    return TweenService:Create(
+        humanoidRootPart,
+        TweenInfo.new(time, Enum.EasingStyle.Linear),
+        {CFrame = CFrame.new(targetPos)}
+    )
+end
+
+
+-- [*] REPLACED: This is the new, proven tweening function from BESTVERSION.txt
 local function tweenToTarget(targetPosition)
+    cancelCurrentTween() -- Cancel any previous movement
+    tweenController.active = true
+    tweenController.targetPosition = targetPosition
+    
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
+    local humanoid = character:WaitForChild("Humanoid")
+    if not humanoidRootPart or not humanoid then tweenController.active = false; return end
 
-    print("Part 2: Preparing aggressive no-collision movement...")
+    print("Part 2: Preparing smooth CFrame movement...")
+
+    local originalState = {
+        WalkSpeed = humanoid.WalkSpeed,
+        AutoRotate = humanoid.AutoRotate,
+        JumpPower = humanoid.JumpPower,
+        Gravity = workspace.Gravity
+    }
+
+    humanoid.WalkSpeed = 0
+    humanoid.AutoRotate = false
+    humanoid.JumpPower = 0
+    workspace.Gravity = 0
     
-    if movementConnection then movementConnection:Disconnect() end
-
-    -- Turn off collisions before moving
-    setPlayerCollision(false)
-
-    movementConnection = RunService.Heartbeat:Connect(function()
-        if not humanoidRootPart.Parent then
-            movementConnection:Disconnect()
-            setPlayerCollision(true)
-            return
-        end
-
-        local currentPosition = humanoidRootPart.Position
-        local distance = (targetPosition - currentPosition).Magnitude
-
-        if distance < 10 then
-            movementConnection:Disconnect()
-            movementConnection = nil
-            humanoidRootPart.Velocity = Vector3.new(0,0,0)
-            print("Movement complete. Arrived at target.")
-            return
+    -- Main movement loop
+    task.spawn(function()
+        while tweenController.active and humanoidRootPart and humanoidRootPart.Parent do
+            local distanceToTarget = (humanoidRootPart.Position - targetPosition).Magnitude
+            if distanceToTarget < 5 then
+                print("Arrived at target.")
+                break 
+            end
+            
+            if not tweenController.currentTween then
+                tweenController.currentTween = createMovementTween(humanoidRootPart, targetPosition, TWEEN_SPEED)
+                tweenController.currentTween:Play()
+            end
+            
+            task.wait(0.1)
         end
         
-        local direction = (targetPosition - currentPosition).Unit
-        humanoidRootPart.Velocity = direction * TWEEN_SPEED
+        -- Cleanup when loop ends
+        cancelCurrentTween()
+        resetCharacterState(humanoid, originalState)
+        tweenController.active = false
     end)
     
-    -- [*] ADDED: This new loop runs in parallel to the movement
-    -- and constantly enforces the no-collision state.
-    task.spawn(function()
-        while movementConnection do
-            setPlayerCollision(false)
-            task.wait()
-        end
-    end)
-    
-    -- Wait for the movement to finish
-    while movementConnection do
+    -- Wait for the movement to complete
+    while tweenController.active do
         task.wait()
     end
-
-    -- Turn collisions back on after arriving
-    setPlayerCollision(true)
-
-    print("Locking player in place for 3 seconds to stabilize physics...")
+    
+    -- Post-arrival stabilization
+    print("Locking player in place for 3 seconds...")
     task.wait(3)
     print("Player unlocked.")
 end
+
 
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
@@ -167,6 +196,7 @@ if riftInstance then
         print("Target found! Beginning two-part movement sequence.")
         
         local riftPosition = riftInstance:GetPivot().Position
+        local safeTargetPosition = riftPosition + Vector3.new(0, 5, 0)
         
         teleportToClosestPoint(math.floor(riftPosition.Y))
         
@@ -175,7 +205,7 @@ if riftInstance then
         
         task.wait(3)
         
-        tweenToTarget(riftPosition)
+        tweenToTarget(safeTargetPosition)
 
         startAutoPressR()
     end)
@@ -183,11 +213,9 @@ if riftInstance then
     if not success then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
-        setPlayerCollision(true) -- Ensure collisions are re-enabled on error
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
-    
 else
     print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
     getgenv().autoPressR = false 
