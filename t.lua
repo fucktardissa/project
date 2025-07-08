@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v25 - Pathfinding Movement)
+    Validator & Reporter Script (v27 - Simplified & Monitored Movement)
 ]]
 
 -- =============================================
@@ -9,6 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
+local TWEEN_SPEED = 150 -- Studs per second
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -16,7 +17,8 @@ local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local PathfindingService = game:GetService("PathfindingService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -38,6 +40,7 @@ local function sendWebhook(targetUrl, payload)
 end
 
 local function teleportToClosestPoint(targetHeight)
+    -- Reverted to original paths as requested
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
         {name = "The Void", path = "Workspace.Worlds.The Overworld.Islands.The Void.Island.Portal.Spawn", height = 10135},
@@ -86,61 +89,51 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- NEW PATHFINDING MOVEMENT SYSTEM
+-- SIMPLIFIED & MONITORED TWEENING SYSTEM
 -- =============================================
 
-local function walkToTarget(targetPosition)
+local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not rootPart then
-        warn("Pathfinding failed: Character models not found.")
+    local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not (humanoid and humanoidRootPart) then
+        warn("Movement failed: Character parts not found.")
         return
     end
 
-    -- Create a path object
-    local path = PathfindingService:CreatePath()
+    -- 1. Create the Tween
+    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    if distance < 1 then return end -- Don't move if we are already there
     
-    -- Compute the path from current position to target
-    local success, errorMessage = pcall(function()
-        path:ComputeAsync(rootPart.Position, targetPosition)
-    end)
+    local time = distance / TWEEN_SPEED
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
+    
+    -- 2. Minimal State Change
+    local originalAutoRotate = humanoid.AutoRotate
+    humanoid.AutoRotate = false
+    
+    movementTween:Play()
 
-    if not success or path.Status ~= Enum.PathStatus.Success then
-        warn("Pathfinding failed: Could not compute a valid path. Reason: " .. tostring(errorMessage or path.Status.Name))
-        -- As a fallback, try to walk directly to the target
-        humanoid:MoveTo(targetPosition)
-        humanoid.MoveToFinished:Wait(5) -- Wait up to 5 seconds for the fallback
-        return
+    -- 3. Monitored Wait with Timeout
+    local startTime = tick()
+    local timeout = time + 5 -- Give it 5 extra seconds to complete
+    repeat
+        task.wait()
+    until movementTween.PlaybackState == Enum.PlaybackState.Completed or movementTween.PlaybackState == Enum.PlaybackState.Cancelled or tick() - startTime > timeout
+
+    if movementTween.PlaybackState ~= Enum.PlaybackState.Completed then
+        warn("Tween did not complete successfully. State: " .. tostring(movementTween.PlaybackState))
+        movementTween:Cancel()
     end
 
-    print("Pathfinding successful. Following waypoints...")
-    local waypoints = path:GetWaypoints()
-
-    -- Follow the computed path
-    for _, waypoint in ipairs(waypoints) do
-        -- Check if the waypoint is an obstacle and move to the next if it is
-        if waypoint.Action == Enum.PathWaypointAction.Jump then
-            humanoid.Jump = true
-        end
-        
-        humanoid:MoveTo(waypoint.Position)
-        
-        -- Wait until the character reaches the waypoint or a timeout occurs
-        local timeWaited = 0
-        while (rootPart.Position - waypoint.Position).Magnitude > 4 and timeWaited < 5 do
-            task.wait(0.1)
-            timeWaited = timeWaited + 0.1
-        end
-        
-        if timeWaited >= 5 then
-            warn("Pathfinding timeout: Took too long to reach a waypoint. Stopping.")
-            break
-        end
-    end
-    print("Path following complete.")
+    -- 4. Stabilize and Restore
+    humanoidRootPart.Anchored = true
+    task.wait(0.25)
+    humanoidRootPart.Anchored = false
+    humanoid.AutoRotate = originalAutoRotate
 end
-
 
 -- =============================================
 
@@ -176,11 +169,11 @@ if riftInstance then
         local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
         sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
         
-        -- Wait for teleport to settle
-        task.wait(5) 
+        task.wait(5) -- Wait for teleport to settle
         
-        -- Use the new pathfinding movement
-        walkToTarget(safeTargetPosition)
+        print("Part 2: Preparing simplified movement...")
+        performMovement(safeTargetPosition)
+        print("Movement finished.")
         
         startAutoPressR()
     end)
