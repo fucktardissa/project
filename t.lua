@@ -1,7 +1,8 @@
 --[[
-    Validator & Reporter Script (v38 - Altitude Adjustment)
-    - Based on user feedback, added an ALTITUDE_ADJUSTMENT variable.
-    - This manually lowers the final target height to prevent overshooting the platform and falling.
+    Validator & Reporter Script (v40 - Final Landing State)
+    - Fixes the final "pop up" on landing.
+    - Manually sets the Humanoid's state to "Landed" before un-anchoring.
+    - This should create a perfectly smooth and stable landing.
 ]]
 
 -- =============================================
@@ -13,7 +14,7 @@ local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/13913307763892
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 150
 local HORIZONTAL_SPEED = 35
-local ALTITUDE_ADJUSTMENT = 5 -- **NEW** Studs to lower the target height by to prevent overshooting.
+local ALTITUDE_ADJUSTMENT = 5 
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -110,10 +111,10 @@ local function performMovement(targetPosition)
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
-    -- ** APPLY ALTITUDE ADJUSTMENT TO PREVENT OVERSHOOTING **
+    -- 2. Apply Altitude Adjustment
     local adjustedTarget = targetPosition - Vector3.new(0, ALTITUDE_ADJUSTMENT, 0)
 
-    -- 2. Phase 1: Smoothly tween vertically
+    -- 3. Phase 1: Smoothly tween vertically
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, adjustedTarget.Y, startPos.Z)
     print("Part 2a: Smoothly tweening to adjusted target altitude...")
@@ -122,14 +123,14 @@ local function performMovement(targetPosition)
     verticalTween:Play()
     verticalTween.Completed:Wait()
 
-    -- 3. Phase 2: Slowly tween horizontally
+    -- 4. Phase 2: Slowly tween horizontally
     print("Part 2b: Slowly tweening to final destination...")
     local horizontalTime = (humanoidRootPart.Position - adjustedTarget).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(adjustedTarget)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
-    -- 4. REFINED STABILIZATION SEQUENCE
+    -- 5. FINAL STABILIZATION SEQUENCE
     print("Destination reached. Stabilizing...")
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
@@ -139,7 +140,11 @@ local function performMovement(targetPosition)
             part.CanCollide = canCollide
         end
     end
+    
+    -- ** NEW **: Manually set the state to Landed to prevent the upward "pop"
+    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
+
     humanoidRootPart.Anchored = false
     print("Stabilization complete.")
 end
@@ -180,7 +185,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing refined 'Slow & Steady' movement...")
+        print("Part 2: Preparing final 'Slow & Steady' movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
