@@ -1,8 +1,7 @@
 --[[
-    Validator & Reporter Script (v31 - Simplified Ghost Movement)
-    - Replaced Pathfinding with a much simpler "ghost" method using Collision Groups.
-    - Character temporarily passes through objects to prevent getting stuck.
-    - This is faster, simpler, and more reliable if the map path is blocked.
+    Validator & Reporter Script (v32 - Final Client-Only Version)
+    - Reverted to a 100% client-side script. Does NOT require server access.
+    - Implements a client-only "ghost mode" by manually setting CanCollide to false on character parts.
 ]]
 
 -- =============================================
@@ -12,7 +11,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 200 -- Can be faster now
+local TWEEN_SPEED = 200
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -21,24 +20,12 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local PhysicsService = game:GetService("PhysicsService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
 -- =============================================
--- SETUP COLLISION GROUPS (Ghost Mode)
--- =============================================
-local GHOST_GROUP = "PlayerGhost"
-pcall(function()
-    PhysicsService:CreateCollisionGroup(GHOST_GROUP)
-end)
--- Make the ghost group not collide with the default world group
-PhysicsService:CollisionGroupSetCollidable(GHOST_GROUP, "Default", false)
-
-
--- =============================================
--- UTILITY FUNCTIONS (Unchanged)
+-- UTILITY FUNCTIONS
 -- =============================================
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
@@ -54,7 +41,6 @@ local function sendWebhook(targetUrl, payload)
 end
 
 local function teleportToClosestPoint(targetHeight)
-    -- This function remains unchanged.
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
         {name = "The Void", path = "Workspace.Worlds.The Overworld.Islands.The Void.Island.Portal.Spawn", height = 10135},
@@ -78,7 +64,6 @@ local function teleportToClosestPoint(targetHeight)
 end
 
 local function findSafeLandingSpot(originalPosition)
-    -- This function remains unchanged.
     print("Finding a safe landing spot using raycasting...")
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
@@ -100,7 +85,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- SIMPLIFIED GHOST TWEENING SYSTEM
+-- CLIENT-ONLY GHOST TWEENING SYSTEM
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -111,13 +96,18 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Turn on Ghost Mode
-    print("Engaging ghost mode (disabling collisions)...")
+    -- 1. Turn on Ghost Mode by disabling CanCollide
+    print("Engaging client-only ghost mode...")
+    local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
         if part:IsA("BasePart") then
-            part.CollisionGroup = GHOST_GROUP
+            originalCollisions[part] = part.CanCollide
+            part.CanCollide = false
         end
     end
+    
+    local originalPlatformStand = humanoid.PlatformStand
+    humanoid.PlatformStand = true
 
     -- 2. Perform a single, direct tween
     print("Moving directly to target...")
@@ -131,12 +121,13 @@ local function performMovement(targetPosition)
 
     -- 3. Turn off Ghost Mode and Stabilize
     print("Disengaging ghost mode and stabilizing...")
-    humanoidRootPart.Velocity = Vector3.new(0, 0, 0) -- Kill momentum before physics re-engages
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CollisionGroup = "Default"
+    for part, canCollide in pairs(originalCollisions) do
+        if part and part.Parent then -- Make sure part still exists
+            part.CanCollide = canCollide
         end
     end
+    
+    humanoid.PlatformStand = originalPlatformStand
     
     humanoidRootPart.Anchored = true
     task.wait(0.2)
@@ -146,7 +137,7 @@ end
 
 
 -- =============================================
--- AUTO-PRESS 'R' UTILITY (Unchanged)
+-- AUTO-PRESS 'R' UTILITY
 -- =============================================
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
@@ -162,7 +153,7 @@ local function startAutoPressR()
 end
 
 -- =============================================
--- MAIN EXECUTION (Error handling logic from v30 is kept)
+-- MAIN EXECUTION
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
@@ -181,7 +172,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing simplified ghost movement...")
+        print("Part 2: Preparing client-only ghost movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
