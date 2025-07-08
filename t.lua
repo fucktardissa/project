@@ -1,8 +1,8 @@
 --[[
-    Validator & Reporter Script (v43 - Direction-Aware Monitor)
-    - Fixes the bug where movement failed only when going downwards.
-    - The vertical tween monitor is now "direction-aware," checking if altitude is >= or <= the target.
-    - This provides a much more robust and precise stop, preventing the tween from blowing past the target.
+    Validator & Reporter Script (v45 - Whitelist Raycast)
+    - Implemented user's suggestion for a more reliable landing spot detection.
+    - findSafeLandingSpot now uses a "whitelist" raycast.
+    - It will ONLY detect hits on the island that the target rift is a part of, ignoring all other geometry like clouds.
 ]]
 
 -- =============================================
@@ -66,29 +66,42 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
-local function findSafeLandingSpot(originalPosition)
-    print("Finding a safe landing spot using raycasting...")
+-- THIS FUNCTION HAS BEEN COMPLETELY REBUILT WITH YOUR SUGGESTION
+local function findSafeLandingSpot(riftInstance)
+    print("Finding a safe landing spot using a whitelisted raycast...")
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
-    local rayDirection = Vector3.new(0, -200, 0)
+    local islandModel = riftInstance.Parent -- The model containing the rift and its island parts
+
+    if not islandModel then
+        warn("Could not find parent model of the rift.")
+        return nil
+    end
+
     local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {character}
+    raycastParams.FilterType = Enum.RaycastFilterType.Include -- Use a WHITELIST
+    raycastParams.FilterDescendantsInstances = {islandModel} -- Only target parts within the island model
     raycastParams.IgnoreWater = true
-    local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-    if raycastResult and raycastResult.Instance and raycastResult.Instance.CanCollide then
-        local groundPosition = raycastResult.Position
+
+    local originalPosition = riftInstance:GetPivot().Position
+    local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
+    local rayDirection = Vector3.new(0, -200, 0) 
+
+    local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+
+    if rayResult and rayResult.Instance then
+        local groundPosition = rayResult.Position
         local finalTarget = groundPosition + Vector3.new(0, 4, 0)
-        print("Safe landing spot found at: " .. tostring(finalTarget))
+        print("Safe landing spot found on target island at: " .. tostring(finalTarget))
         return finalTarget
     else
-        warn("Raycast failed to find ground. Falling back to original target logic.")
-        return originalPosition + Vector3.new(0, 5, 0)
+        warn("Whitelist raycast failed to find the target island ground.")
+        -- Fallback to a position just above the rift's pivot as a last resort
+        return originalPosition + Vector3.new(0, 4, 0)
     end
 end
 
 -- =============================================
--- MOVEMENT SYSTEM (with Direction-Aware Monitor)
+-- MOVEMENT SYSTEM (Unchanged from v43)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -99,67 +112,38 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Engage Ghost Mode
-    print("Engaging client-only ghost mode...")
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            originalCollisions[part] = part.CanCollide
-            part.CanCollide = false
-        end
+        if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide; part.CanCollide = false; end
     end
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
-    -- 2. Phase 1: MONITORED tween vertically
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
-    print("Part 2a: Moving to target altitude...")
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     
     verticalTween:Play()
     
-    -- Determine direction for the new, smarter monitor
     local direction = (intermediatePos.Position.Y > startPos.Y) and "UP" or "DOWN"
     local targetY = intermediatePos.Position.Y
-
-    local connection
-    connection = RunService.Heartbeat:Connect(function()
+    local connection = RunService.Heartbeat:Connect(function()
         local currentY = humanoidRootPart.Position.Y
-        local conditionMet = false
-        
-        if direction == "UP" and currentY >= targetY then
-            conditionMet = true
-        elseif direction == "DOWN" and currentY <= targetY then
-            conditionMet = true
-        end
-
+        local conditionMet = (direction == "UP" and currentY >= targetY) or (direction == "DOWN" and currentY <= targetY)
         if conditionMet then
-            print("Target altitude reached precisely. Cancelling vertical tween.")
             verticalTween:Cancel()
-            if connection.Connected then
-                connection:Disconnect()
-            end
         end
     end)
     
-    while verticalTween.PlaybackState == Enum.PlaybackState.Playing do
-        task.wait()
-    end
-    if connection.Connected then
-        connection:Disconnect()
-    end
+    verticalTween.Completed:Wait()
+    connection:Disconnect()
     
-    -- 3. Phase 2: Slowly tween horizontally
-    print("Part 2b: Slowly tweening to final destination...")
     local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
-    -- 4. Stabilization
-    print("Destination reached. Stabilizing...")
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
@@ -169,11 +153,10 @@ local function performMovement(targetPosition)
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
     humanoidRootPart.Anchored = false
-    print("Stabilization complete.")
 end
 
 -- =============================================
--- AUTO-PRESS 'R' UTILITY
+-- AUTO-PRESS 'R' UTILITY & MAIN EXECUTION
 -- =============================================
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
@@ -188,9 +171,6 @@ local function startAutoPressR()
     end)
 end
 
--- =============================================
--- MAIN EXECUTION
--- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
 
@@ -198,17 +178,21 @@ if riftInstance then
     local success, errorMessage = pcall(function()
         print("Target found! Beginning sequence.")
         
-        local riftPosition = riftInstance:GetPivot().Position
-        local safeTargetPosition = findSafeLandingSpot(riftPosition)
+        -- The function call is updated to pass the riftInstance
+        local safeTargetPosition = findSafeLandingSpot(riftInstance)
         
-        teleportToClosestPoint(math.floor(riftPosition.Y))
+        if not safeTargetPosition then
+            error("Could not determine a safe landing spot on the target island.")
+        end
+        
+        teleportToClosestPoint(math.floor(safeTargetPosition.Y))
         
         local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
         sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
         
         task.wait(5)
         
-        print("Part 2: Preparing direction-aware movement...")
+        print("Part 2: Preparing whitelisted movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
