@@ -1,7 +1,8 @@
 --[[
-    Validator & Reporter Script (v32 - Final Client-Only Version)
-    - Reverted to a 100% client-side script. Does NOT require server access.
-    - Implements a client-only "ghost mode" by manually setting CanCollide to false on character parts.
+    Validator & Reporter Script (v33 - Physics-Based Movement)
+    - Replaced TweenService movement with physics-based BodyVelocity.
+    - This attempts to avoid CFrame-based anti-cheat flags by using physics simulation.
+    - This is the final client-side strategy.
 ]]
 
 -- =============================================
@@ -11,7 +12,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 200
+local MOVEMENT_SPEED = 200 -- The speed in studs/sec for the BodyVelocity
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -19,7 +20,7 @@ local TWEEN_SPEED = 200
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -85,7 +86,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- CLIENT-ONLY GHOST TWEENING SYSTEM
+-- PHYSICS-BASED MOVEMENT SYSTEM
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -105,36 +106,39 @@ local function performMovement(targetPosition)
             part.CanCollide = false
         end
     end
-    
-    local originalPlatformStand = humanoid.PlatformStand
-    humanoid.PlatformStand = true
 
-    -- 2. Perform a single, direct tween
-    print("Moving directly to target...")
-    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
-    local time = distance / TWEEN_SPEED
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
-    
-    movementTween:Play()
-    movementTween.Completed:Wait()
+    -- 2. Create and apply the BodyVelocity
+    print("Applying physics-based velocity...")
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bodyVelocity.Velocity = (targetPosition - humanoidRootPart.Position).Unit * MOVEMENT_SPEED
+    bodyVelocity.Parent = humanoidRootPart
 
-    -- 3. Turn off Ghost Mode and Stabilize
-    print("Disengaging ghost mode and stabilizing...")
+    -- 3. Monitor the movement until we arrive
+    local timeout = (humanoidRootPart.Position - targetPosition).Magnitude / MOVEMENT_SPEED + 5 -- Add 5s buffer
+    local startTime = tick()
+    
+    repeat
+        RunService.Heartbeat:Wait()
+        -- Update velocity direction in case we get knocked off course
+        bodyVelocity.Velocity = (targetPosition - humanoidRootPart.Position).Unit * MOVEMENT_SPEED
+    until (humanoidRootPart.Position - targetPosition).Magnitude < 10 or tick() - startTime > timeout
+    
+    -- 4. Cleanup and Stabilize
+    print("Destination reached. Cleaning up...")
+    bodyVelocity:Destroy()
+
     for part, canCollide in pairs(originalCollisions) do
-        if part and part.Parent then -- Make sure part still exists
+        if part and part.Parent then
             part.CanCollide = canCollide
         end
     end
-    
-    humanoid.PlatformStand = originalPlatformStand
     
     humanoidRootPart.Anchored = true
     task.wait(0.2)
     humanoidRootPart.Anchored = false
     print("Stabilization complete.")
 end
-
 
 -- =============================================
 -- AUTO-PRESS 'R' UTILITY
@@ -172,7 +176,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing client-only ghost movement...")
+        print("Part 2: Preparing physics-based movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
@@ -188,7 +192,7 @@ if riftInstance then
 else
     print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
     getgenv().autoPressR = false
-    local failurePayload = {content = "RIFT_SEARCH_FAILED_NOT_FOUND"}
+    local failurePayload = {content = "RIFT_SEARCH_FAILED"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
 
