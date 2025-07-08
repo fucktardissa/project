@@ -1,8 +1,8 @@
 --[[
-    Validator & Reporter Script (v30 - Improved Error Handling)
-    - Throws an error if PathfindingService fails, allowing the main pcall to catch it and stop the sequence correctly.
-    - Reduced AgentRadius to help navigate narrower paths.
-    - Added more detailed logging for debugging path failures.
+    Validator & Reporter Script (v31 - Simplified Ghost Movement)
+    - Replaced Pathfinding with a much simpler "ghost" method using Collision Groups.
+    - Character temporarily passes through objects to prevent getting stuck.
+    - This is faster, simpler, and more reliable if the map path is blocked.
 ]]
 
 -- =============================================
@@ -12,7 +12,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 
+local TWEEN_SPEED = 200 -- Can be faster now
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -21,10 +21,21 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local PathfindingService = game:GetService("PathfindingService")
+local PhysicsService = game:GetService("PhysicsService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
+
+-- =============================================
+-- SETUP COLLISION GROUPS (Ghost Mode)
+-- =============================================
+local GHOST_GROUP = "PlayerGhost"
+pcall(function()
+    PhysicsService:CreateCollisionGroup(GHOST_GROUP)
+end)
+-- Make the ghost group not collide with the default world group
+PhysicsService:CollisionGroupSetCollidable(GHOST_GROUP, "Default", false)
+
 
 -- =============================================
 -- UTILITY FUNCTIONS (Unchanged)
@@ -88,9 +99,8 @@ local function findSafeLandingSpot(originalPosition)
     end
 end
 
-
 -- =============================================
--- REMADE TWEENING SYSTEM (v4 - Error Handling)
+-- SIMPLIFIED GHOST TWEENING SYSTEM
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -101,49 +111,42 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- Create a Path object with a SMALLER agent radius to fit through more gaps.
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2, -- REDUCED from 3 to 2
-        AgentHeight = 6,
-        AgentCanJump = false
-    })
-
-    print("Calculating path to destination...")
-    path:ComputeAsync(humanoidRootPart.Position, targetPosition)
-
-    -- If the path fails, we now throw an error. The main pcall will catch this.
-    if path.Status ~= Enum.PathStatus.Success then
-        error("Could not compute a valid path. Status: " .. tostring(path.Status))
-    end
-
-    print("Path calculated successfully. Following waypoints...")
-    local waypoints = path:GetWaypoints()
-    
-    local originalAutoRotate = humanoid.AutoRotate
-    humanoid.AutoRotate = false
-    humanoid.PlatformStand = true
-
-    for i, waypoint in ipairs(waypoints) do
-        if i == 1 and (waypoint.Position - humanoidRootPart.Position).Magnitude < 2 then
-            continue
+    -- 1. Turn on Ghost Mode
+    print("Engaging ghost mode (disabling collisions)...")
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CollisionGroup = GHOST_GROUP
         end
-        local tween = TweenService:Create(humanoidRootPart, TweenInfo.new((humanoidRootPart.Position - waypoint.Position).Magnitude / TWEEN_SPEED), {CFrame = CFrame.new(waypoint.Position)})
-        tween:Play()
-        tween.Completed:Wait()
     end
 
-    print("Final waypoint reached. Stabilizing...")
-    humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+    -- 2. Perform a single, direct tween
+    print("Moving directly to target...")
+    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local time = distance / TWEEN_SPEED
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
+    
+    movementTween:Play()
+    movementTween.Completed:Wait()
+
+    -- 3. Turn off Ghost Mode and Stabilize
+    print("Disengaging ghost mode and stabilizing...")
+    humanoidRootPart.Velocity = Vector3.new(0, 0, 0) -- Kill momentum before physics re-engages
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CollisionGroup = "Default"
+        end
+    end
+    
     humanoidRootPart.Anchored = true
     task.wait(0.2)
     humanoidRootPart.Anchored = false
-    humanoid.PlatformStand = false
-    humanoid.AutoRotate = originalAutoRotate
-    print("Character stabilized.")
+    print("Stabilization complete.")
 end
 
+
 -- =============================================
--- AUTO-PRESS 'R' UTILITY
+-- AUTO-PRESS 'R' UTILITY (Unchanged)
 -- =============================================
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
@@ -159,7 +162,7 @@ local function startAutoPressR()
 end
 
 -- =============================================
--- MAIN EXECUTION
+-- MAIN EXECUTION (Error handling logic from v30 is kept)
 -- =============================================
 print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
 local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
@@ -178,15 +181,14 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing pathfinding movement...")
-        performMovement(safeTargetPosition) -- This will now error on failure
+        print("Part 2: Preparing simplified ghost movement...")
+        performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
-        startAutoPressR() -- This line is now only reached if movement succeeds
+        startAutoPressR()
     end)
 
     if not success then
-        -- This block now correctly catches the pathfinding failure
         warn("An error occurred during main sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false
         local failurePayload = {content = "RIFT_SEARCH_FAILED: " .. tostring(errorMessage)}
