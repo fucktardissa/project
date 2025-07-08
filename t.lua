@@ -1,8 +1,7 @@
 --[[
-    Validator & Reporter Script (v33 - Physics-Based Movement)
-    - Replaced TweenService movement with physics-based BodyVelocity.
-    - This attempts to avoid CFrame-based anti-cheat flags by using physics simulation.
-    - This is the final client-side strategy.
+    Validator & Reporter Script (v34 - PlatformStand Fix)
+    - Re-added 'humanoid.PlatformStand = true' during movement.
+    - This prevents the default humanoid physics from interfering with the BodyVelocity, which should fix the "getting stuck" issue.
 ]]
 
 -- =============================================
@@ -12,7 +11,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local MOVEMENT_SPEED = 200 -- The speed in studs/sec for the BodyVelocity
+local MOVEMENT_SPEED = 150
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -86,7 +85,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- PHYSICS-BASED MOVEMENT SYSTEM
+-- PHYSICS-BASED MOVEMENT SYSTEM (v2)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -97,7 +96,7 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Turn on Ghost Mode by disabling CanCollide
+    -- 1. Turn on Ghost Mode and set PlatformStand
     print("Engaging client-only ghost mode...")
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
@@ -106,6 +105,9 @@ local function performMovement(targetPosition)
             part.CanCollide = false
         end
     end
+    
+    local originalPlatformStand = humanoid.PlatformStand
+    humanoid.PlatformStand = true -- CRITICAL: Disables default humanoid physics interference
 
     -- 2. Create and apply the BodyVelocity
     print("Applying physics-based velocity...")
@@ -115,12 +117,11 @@ local function performMovement(targetPosition)
     bodyVelocity.Parent = humanoidRootPart
 
     -- 3. Monitor the movement until we arrive
-    local timeout = (humanoidRootPart.Position - targetPosition).Magnitude / MOVEMENT_SPEED + 5 -- Add 5s buffer
+    local timeout = (humanoidRootPart.Position - targetPosition).Magnitude / MOVEMENT_SPEED + 5
     local startTime = tick()
     
     repeat
         RunService.Heartbeat:Wait()
-        -- Update velocity direction in case we get knocked off course
         bodyVelocity.Velocity = (targetPosition - humanoidRootPart.Position).Unit * MOVEMENT_SPEED
     until (humanoidRootPart.Position - targetPosition).Magnitude < 10 or tick() - startTime > timeout
     
@@ -133,6 +134,8 @@ local function performMovement(targetPosition)
             part.CanCollide = canCollide
         end
     end
+    
+    humanoid.PlatformStand = originalPlatformStand -- Restore original state
     
     humanoidRootPart.Anchored = true
     task.wait(0.2)
@@ -192,7 +195,7 @@ if riftInstance then
 else
     print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
     getgenv().autoPressR = false
-    local failurePayload = {content = "RIFT_SEARCH_FAILED"}
+    local failurePayload = {content = "RIFT_SEARCH_FAILED_NOT_FOUND"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
 
