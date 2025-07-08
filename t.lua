@@ -1,8 +1,8 @@
 --[[
-    Validator & Reporter Script (v40 - Final Landing State)
-    - Fixes the final "pop up" on landing.
-    - Manually sets the Humanoid's state to "Landed" before un-anchoring.
-    - This should create a perfectly smooth and stable landing.
+    Validator & Reporter Script (v41 - Smooth Camera)
+    - Implemented manual camera control during tweens to fix visual stuttering and lag.
+    - The camera is now set to "Scriptable" during movement for a smooth visual experience.
+    - This should be the final, polished version.
 ]]
 
 -- =============================================
@@ -23,6 +23,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -88,19 +89,30 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- REFINED MOVEMENT SYSTEM (THIS FUNCTION IS UPDATED)
+-- POLISHED MOVEMENT SYSTEM (with Smooth Camera)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
 
-    if not (humanoid and humanoidRootPart) then
-        error("Movement failed: Character parts not found.")
+    if not (humanoid and humanoidRootPart and camera) then
+        error("Movement failed: Character parts or camera not found.")
     end
 
-    -- 1. Engage Ghost Mode
-    print("Engaging client-only ghost mode...")
+    -- 1. Take control of the camera
+    print("Taking control of camera for smooth movement...")
+    local originalCameraType = camera.CameraType
+    camera.CameraType = Enum.CameraType.Scriptable
+    
+    local cameraConnection = RunService.RenderStepped:Connect(function()
+        local lookAtPosition = humanoidRootPart.Position + Vector3.new(0, 2, 0)
+        local cameraPosition = lookAtPosition + (humanoidRootPart.CFrame.LookVector * 10) + Vector3.new(0, 5, 15)
+        camera.CFrame = CFrame.new(cameraPosition, lookAtPosition)
+    end)
+
+    -- 2. Engage Ghost Mode
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -111,43 +123,40 @@ local function performMovement(targetPosition)
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
-    -- 2. Apply Altitude Adjustment
+    -- 3. Perform movement tweens
     local adjustedTarget = targetPosition - Vector3.new(0, ALTITUDE_ADJUSTMENT, 0)
-
-    -- 3. Phase 1: Smoothly tween vertically
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, adjustedTarget.Y, startPos.Z)
-    print("Part 2a: Smoothly tweening to adjusted target altitude...")
+    
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     verticalTween:Play()
     verticalTween.Completed:Wait()
 
-    -- 4. Phase 2: Slowly tween horizontally
-    print("Part 2b: Slowly tweening to final destination...")
     local horizontalTime = (humanoidRootPart.Position - adjustedTarget).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(adjustedTarget)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
-    -- 5. FINAL STABILIZATION SEQUENCE
-    print("Destination reached. Stabilizing...")
+    -- 4. Disconnect camera loop and stabilize character
+    cameraConnection:Disconnect()
+    print("Movement finished. Stabilizing...")
+    
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
     for part, canCollide in pairs(originalCollisions) do
-        if part and part.Parent then
-            part.CanCollide = canCollide
-        end
+        if part and part.Parent then part.CanCollide = canCollide; end
     end
-    
-    -- ** NEW **: Manually set the state to Landed to prevent the upward "pop"
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
-
     humanoidRootPart.Anchored = false
-    print("Stabilization complete.")
+    
+    -- 5. Return camera control to the game
+    camera.CameraType = originalCameraType
+    print("Stabilization and camera restore complete.")
 end
+
 
 -- =============================================
 -- AUTO-PRESS 'R' UTILITY
@@ -185,7 +194,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing final 'Slow & Steady' movement...")
+        print("Part 2: Preparing polished movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
