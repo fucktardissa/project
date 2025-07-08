@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v22 - Precise Movement)
+    Validator & Reporter Script (v23 - Anchoring Lock)
 ]]
 
 -- =============================================
@@ -88,7 +88,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- REPLACEMENT TWEENING SYSTEM
+-- ROBUST TWEENING SYSTEM
 -- =============================================
 
 local currentMovementTween = nil
@@ -117,6 +117,7 @@ local function createMovementTween(humanoidRootPart, targetPos, speed)
     return TweenService:Create(humanoidRootPart, tweenInfo, goals)
 end
 
+-- [*] MODIFIED: This function now includes an anchoring lock to prevent flinging.
 local function performTweenMovement(humanoidRootPart, targetPosition)
     local character = humanoidRootPart.Parent
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -142,11 +143,16 @@ local function performTweenMovement(humanoidRootPart, targetPosition)
 
     movementTween.Completed:Wait()
 
+    -- New anchoring lock to stabilize the character and prevent flinging
+    humanoidRootPart.Anchored = true
+    task.wait(0.5) -- Wait for a moment while anchored
+    humanoidRootPart.Anchored = false
+
+    -- Now it's safe to restore the character's state
     resetCharacterState(humanoid, originalState)
     currentMovementTween = nil
 end
 
--- [*] MODIFIED: Changed distance check from 20 to 5 for more precision.
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
@@ -157,7 +163,6 @@ local function tweenToTarget(targetPosition)
     local retryAttempts = 0
     local MAX_RETRIES = 3
 
-    -- This check is now more precise.
     while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 5 do
         if retryAttempts > 0 then
             warn("Player is too far from target after movement. Retrying... (Attempt " .. retryAttempts .. ")")
@@ -167,16 +172,13 @@ local function tweenToTarget(targetPosition)
         retryAttempts = retryAttempts + 1
     end
     
-    -- This check is also more precise.
     if (humanoidRootPart.Position - targetPosition).Magnitude <= 5 then
         print("Movement successful. Arrived at target.")
     else
         warn("Failed to get player to target position after " .. MAX_RETRIES .. " retries.")
     end
 
-    print("Locking player in place for 3 seconds to stabilize physics...")
-    task.wait(3)
-    print("Player unlocked.")
+    -- The old lock is no longer needed as the new anchoring lock is more effective.
 end
 
 -- =============================================
@@ -227,6 +229,7 @@ if riftInstance then
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hum then
             resetCharacterState(hum, {WalkSpeed = 16, AutoRotate = true, JumpPower = 50, Gravity = workspace.Gravity})
+            hum.Parent:FindFirstChild("HumanoidRootPart").Anchored = false
         end
         
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
