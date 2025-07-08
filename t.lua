@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v19 - CFrame Movement)
+    Validator & Reporter Script (v20 - PlatformStand Movement)
 ]]
 
 -- =============================================
@@ -96,10 +96,14 @@ local function setPlayerCollision(canCollide)
     end
 end
 
--- [*] MODIFIED: This function now uses CFrame to move the player, ignoring all physics and obstacles.
+-- [*] MODIFIED: This function now uses PlatformStand to completely disable Humanoid physics during movement.
 local function executeMovement(humanoidRootPart, targetPosition)
-    if not humanoidRootPart or not humanoidRootPart.Parent then return end
+    local character = humanoidRootPart.Parent
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
 
+    -- Temporarily disable humanoid physics
+    humanoid.PlatformStand = true
     setPlayerCollision(false)
 
     local startCFrame = humanoidRootPart.CFrame
@@ -107,6 +111,7 @@ local function executeMovement(humanoidRootPart, targetPosition)
     local distance = (startCFrame.Position - targetCFrame.Position).Magnitude
     
     if distance < 1 then 
+        humanoid.PlatformStand = false
         setPlayerCollision(true)
         return 
     end
@@ -117,28 +122,27 @@ local function executeMovement(humanoidRootPart, targetPosition)
     local connection
     connection = RunService.Heartbeat:Connect(function(deltaTime)
         elapsedTime = elapsedTime + deltaTime
-        local alpha = math.min(elapsedTime / duration, 1) -- Progress from 0 to 1
+        local alpha = math.min(elapsedTime / duration, 1)
 
-        -- Linearly interpolate the CFrame to move smoothly
         humanoidRootPart.CFrame = startCFrame:Lerp(targetCFrame, alpha)
         
-        -- Keep collisions off during movement
-        setPlayerCollision(false)
-
-        -- Check if tween is complete
         if alpha >= 1 then
             connection:Disconnect()
+            -- Restore physics and collisions AFTER movement is done
+            humanoid.PlatformStand = false
             setPlayerCollision(true)
         end
     end)
     
-    -- Failsafe to disconnect after duration + buffer
     task.wait(duration + 1)
     if connection.Connected then
         connection:Disconnect()
+        -- Failsafe to restore physics and collisions
+        humanoid.PlatformStand = false
         setPlayerCollision(true)
     end
 end
+
 
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -212,6 +216,11 @@ if riftInstance then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
         setPlayerCollision(true)
+        -- Restore physics in case of an error
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
+        
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
