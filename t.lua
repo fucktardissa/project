@@ -122,3 +122,86 @@ local function performMovement(targetPosition)
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     
     verticalTween:Play()
+    verticalTween.Completed:Wait()
+
+    -- 3. Phase 2: Slowly tween horizontally to the final position
+    print("Part 2b: Slowly tweening to final destination...")
+    local horizontalDistance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local horizontalTime = horizontalDistance / HORIZONTAL_SPEED
+    local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
+    
+    horizontalTween:Play()
+    horizontalTween.Completed:Wait()
+
+    -- 4. Disengage ghost mode and stabilize
+    print("Destination reached. Cleaning up...")
+    for part, canCollide in pairs(originalCollisions) do
+        if part and part.Parent then
+            part.CanCollide = canCollide
+        end
+    end
+    humanoid.PlatformStand = originalPlatformStand
+    
+    humanoidRootPart.Anchored = true
+    task.wait(0.2)
+    humanoidRootPart.Anchored = false
+    print("Stabilization complete.")
+end
+
+-- =============================================
+-- AUTO-PRESS 'R' UTILITY
+-- =============================================
+local function startAutoPressR()
+    print("Starting to auto-press 'R' key...")
+    getgenv().autoPressR = true
+    task.spawn(function()
+        while getgenv().autoPressR do
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+            task.wait()
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+            task.wait(0.1)
+        end
+    end)
+end
+
+-- =============================================
+-- MAIN EXECUTION
+-- =============================================
+print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
+local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
+
+if riftInstance then
+    local success, errorMessage = pcall(function()
+        print("Target found! Beginning sequence.")
+        
+        local riftPosition = riftInstance:GetPivot().Position
+        local safeTargetPosition = findSafeLandingSpot(riftPosition)
+        
+        teleportToClosestPoint(math.floor(riftPosition.Y))
+        
+        local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+        sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
+        
+        task.wait(5)
+        
+        print("Part 2: Preparing 'Slow & Steady' movement...")
+        performMovement(safeTargetPosition)
+        
+        print("Movement successful. Main sequence finished.")
+        startAutoPressR()
+    end)
+
+    if not success then
+        warn("An error occurred during main sequence: " .. tostring(errorMessage))
+        getgenv().autoPressR = false
+        local failurePayload = {content = "RIFT_SEARCH_FAILED: " .. tostring(errorMessage)}
+        sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+    end
+else
+    print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
+    getgenv().autoPressR = false
+    local failurePayload = {content = "RIFT_SEARCH_FAILED_NOT_FOUND"}
+    sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+end
+
+print("Validator/Reporter Script has completed its run.")
