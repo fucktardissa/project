@@ -1,9 +1,8 @@
 --[[
-    Validator & Reporter Script (v42 - Monitored Tween)
-    - Fixes the vertical overshoot problem by manually monitoring the tween.
-    - Instead of waiting for the tween to complete, it's cancelled as soon as the target altitude is reached.
-    - This provides more precise control and avoids end-of-tween physics glitches.
-    - Removed the flawed ALTITUDE_ADJUSTMENT variable.
+    Validator & Reporter Script (v43 - Direction-Aware Monitor)
+    - Fixes the bug where movement failed only when going downwards.
+    - The vertical tween monitor is now "direction-aware," checking if altitude is >= or <= the target.
+    - This provides a much more robust and precise stop, preventing the tween from blowing past the target.
 ]]
 
 -- =============================================
@@ -13,7 +12,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local VERTICAL_SPEED = 500
+local VERTICAL_SPEED = 150
 local HORIZONTAL_SPEED = 35
 
 -- =============================================
@@ -89,7 +88,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- MOVEMENT SYSTEM (with Monitored Vertical Tween)
+-- MOVEMENT SYSTEM (with Direction-Aware Monitor)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -121,23 +120,34 @@ local function performMovement(targetPosition)
     
     verticalTween:Play()
     
-    -- Instead of Completed:Wait(), we manually check the position every frame.
+    -- Determine direction for the new, smarter monitor
+    local direction = (intermediatePos.Position.Y > startPos.Y) and "UP" or "DOWN"
+    local targetY = intermediatePos.Position.Y
+
     local connection
     connection = RunService.Heartbeat:Connect(function()
         local currentY = humanoidRootPart.Position.Y
-        local targetY = intermediatePos.Position.Y
-        if math.abs(currentY - targetY) < 1 then -- Check if we are within 1 stud of the target height
-            print("Target altitude reached. Cancelling vertical tween.")
+        local conditionMet = false
+        
+        if direction == "UP" and currentY >= targetY then
+            conditionMet = true
+        elseif direction == "DOWN" and currentY <= targetY then
+            conditionMet = true
+        end
+
+        if conditionMet then
+            print("Target altitude reached precisely. Cancelling vertical tween.")
             verticalTween:Cancel()
-            connection:Disconnect()
+            if connection.Connected then
+                connection:Disconnect()
+            end
         end
     end)
     
-    -- Wait until the tween is no longer playing (either completed or cancelled by our monitor)
     while verticalTween.PlaybackState == Enum.PlaybackState.Playing do
         task.wait()
     end
-    if connection.Connected then -- Disconnect just in case the loop finished another way
+    if connection.Connected then
         connection:Disconnect()
     end
     
@@ -198,7 +208,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing monitored movement...")
+        print("Part 2: Preparing direction-aware movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
