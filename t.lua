@@ -1,10 +1,8 @@
 --[[
-    Validator & Reporter Script (v36 - "Slow & Steady" Two-Tween System)
-    - Based on user feedback, this version avoids all instant teleports.
-    - Movement is now a two-phase tween, both done in "ghost mode":
-        1. A smooth vertical tween to the target's altitude.
-        2. A very slow horizontal tween to the final destination.
-    - This is the most careful and least aggressive approach, designed to avoid anti-cheat detection.
+    Validator & Reporter Script (v37 - Final Stabilization)
+    - Reworked the post-movement stabilization sequence to prevent character flinging.
+    - Anchors the character *before* re-enabling collisions to ensure stability.
+    - Slightly increased the safe landing height for better clearance.
 ]]
 
 -- =============================================
@@ -14,8 +12,8 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local VERTICAL_SPEED = 150  -- Speed for the up/down movement
-local HORIZONTAL_SPEED = 35 -- VERY SLOW speed for the final approach, as requested
+local VERTICAL_SPEED = 150
+local HORIZONTAL_SPEED = 35
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -79,7 +77,8 @@ local function findSafeLandingSpot(originalPosition)
     local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
     if raycastResult and raycastResult.Instance and raycastResult.Instance.CanCollide then
         local groundPosition = raycastResult.Position
-        local finalTarget = groundPosition + Vector3.new(0, 3, 0)
+        -- Increased offset from 3 to 4 for better clearance
+        local finalTarget = groundPosition + Vector3.new(0, 4, 0)
         print("Safe landing spot found at: " .. tostring(finalTarget))
         return finalTarget
     else
@@ -89,7 +88,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- "SLOW & STEADY" TWO-TWEEN MOVEMENT SYSTEM
+-- REFINED MOVEMENT SYSTEM
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -100,7 +99,7 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Engage Ghost Mode for the entire duration
+    -- 1. Engage Ghost Mode
     print("Engaging client-only ghost mode...")
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
@@ -112,38 +111,41 @@ local function performMovement(targetPosition)
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
-    -- 2. Phase 1: Smoothly tween vertically to the target's height
+    -- 2. Phase 1: Smoothly tween vertically
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
-    
     print("Part 2a: Smoothly tweening to target altitude...")
-    local verticalDistance = (startPos - intermediatePos.Position).Magnitude
-    local verticalTime = verticalDistance / VERTICAL_SPEED
+    local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
-    
     verticalTween:Play()
     verticalTween.Completed:Wait()
 
-    -- 3. Phase 2: Slowly tween horizontally to the final position
+    -- 3. Phase 2: Slowly tween horizontally
     print("Part 2b: Slowly tweening to final destination...")
-    local horizontalDistance = (humanoidRootPart.Position - targetPosition).Magnitude
-    local horizontalTime = horizontalDistance / HORIZONTAL_SPEED
+    local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
-    
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
-    -- 4. Disengage ghost mode and stabilize
-    print("Destination reached. Cleaning up...")
+    -- 4. REFINED STABILIZATION SEQUENCE
+    print("Destination reached. Stabilizing...")
+    
+    -- Step A: Kill all momentum and freeze the character in place FIRST.
+    humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+    humanoidRootPart.Anchored = true
+    
+    -- Step B: Now that the character is frozen, safely restore its state.
+    humanoid.PlatformStand = originalPlatformStand
     for part, canCollide in pairs(originalCollisions) do
         if part and part.Parent then
             part.CanCollide = canCollide
         end
     end
-    humanoid.PlatformStand = originalPlatformStand
+
+    -- Step C: Wait a moment for all properties to apply before unfreezing.
+    task.wait(0.1)
     
-    humanoidRootPart.Anchored = true
-    task.wait(0.2)
+    -- Step D: Unfreeze the character. It should now be stable.
     humanoidRootPart.Anchored = false
     print("Stabilization complete.")
 end
@@ -184,7 +186,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing 'Slow & Steady' movement...")
+        print("Part 2: Preparing refined 'Slow & Steady' movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
