@@ -1,7 +1,10 @@
 --[[
-    Validator & Reporter Script (v34 - PlatformStand Fix)
-    - Re-added 'humanoid.PlatformStand = true' during movement.
-    - This prevents the default humanoid physics from interfering with the BodyVelocity, which should fix the "getting stuck" issue.
+    Validator & Reporter Script (v35 - "Teleport Down, Tween Across" Strategy)
+    - Implemented the user-observed strategy for reliable movement.
+    - Movement is now two parts:
+        1. An instant vertical teleport to match the target's altitude.
+        2. A slow, horizontal ghost-tween to the final destination.
+    - This is a simpler and potentially less detectable movement pattern.
 ]]
 
 -- =============================================
@@ -11,7 +14,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local MOVEMENT_SPEED = 150
+local HORIZONTAL_TWEEN_SPEED = 80 -- Slower speed for the final approach
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -19,7 +22,7 @@ local MOVEMENT_SPEED = 150
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -85,7 +88,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- PHYSICS-BASED MOVEMENT SYSTEM (v2)
+-- "TELEPORT DOWN, TWEEN ACROSS" MOVEMENT SYSTEM
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -96,7 +99,7 @@ local function performMovement(targetPosition)
         error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Turn on Ghost Mode and set PlatformStand
+    -- 1. Engage Ghost Mode
     print("Engaging client-only ghost mode...")
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
@@ -105,43 +108,41 @@ local function performMovement(targetPosition)
             part.CanCollide = false
         end
     end
-    
-    local originalPlatformStand = humanoid.PlatformStand
-    humanoid.PlatformStand = true -- CRITICAL: Disables default humanoid physics interference
 
-    -- 2. Create and apply the BodyVelocity
-    print("Applying physics-based velocity...")
-    local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bodyVelocity.Velocity = (targetPosition - humanoidRootPart.Position).Unit * MOVEMENT_SPEED
-    bodyVelocity.Parent = humanoidRootPart
+    -- 2. INSTANTLY teleport vertically to the target's height
+    local startPos = humanoidRootPart.Position
+    local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
+    
+    print("Part 2a: Instantly moving to target altitude...")
+    humanoidRootPart.Anchored = true
+    humanoidRootPart.CFrame = intermediatePos
+    task.wait(0.1) -- Wait a moment for physics to settle
+    humanoidRootPart.Anchored = false
 
-    -- 3. Monitor the movement until we arrive
-    local timeout = (humanoidRootPart.Position - targetPosition).Magnitude / MOVEMENT_SPEED + 5
-    local startTime = tick()
+    -- 3. SLOWLY tween horizontally to the final position
+    print("Part 2b: Slowly tweening to final destination...")
+    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local time = distance / HORIZONTAL_TWEEN_SPEED
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
     
-    repeat
-        RunService.Heartbeat:Wait()
-        bodyVelocity.Velocity = (targetPosition - humanoidRootPart.Position).Unit * MOVEMENT_SPEED
-    until (humanoidRootPart.Position - targetPosition).Magnitude < 10 or tick() - startTime > timeout
-    
-    -- 4. Cleanup and Stabilize
+    movementTween:Play()
+    movementTween.Completed:Wait()
+
+    -- 4. Disengage ghost mode and stabilize
     print("Destination reached. Cleaning up...")
-    bodyVelocity:Destroy()
-
     for part, canCollide in pairs(originalCollisions) do
         if part and part.Parent then
             part.CanCollide = canCollide
         end
     end
     
-    humanoid.PlatformStand = originalPlatformStand -- Restore original state
-    
     humanoidRootPart.Anchored = true
     task.wait(0.2)
     humanoidRootPart.Anchored = false
     print("Stabilization complete.")
 end
+
 
 -- =============================================
 -- AUTO-PRESS 'R' UTILITY
@@ -177,9 +178,9 @@ if riftInstance then
         local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
         sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
         
-        task.wait(5)
+        task.wait(5) -- Wait for island teleport to settle
         
-        print("Part 2: Preparing physics-based movement...")
+        print("Part 2: Preparing 'Teleport Down, Tween Across' movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
