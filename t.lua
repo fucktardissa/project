@@ -1,15 +1,18 @@
 --[[
-    Validator & Reporter Script (v27 - Simplified & Monitored Movement)
+    Validator & Reporter Script (v28 - Remade Tweening System)
+    - Implemented a 3-part (Up, Across, Down) tweening method to avoid obstacles.
+    - Improved post-movement stabilization to prevent character flinging.
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
-local TARGET_EGG_NAME = "festival-rift-3" 
+local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 -- Studs per second
+local TWEEN_SPEED = 200 -- Studs per second (increased for efficiency with the new system)
+local CLEARANCE_ALTITUDE = 150 -- Studs to ascend to avoid obstacles
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -17,7 +20,6 @@ local TWEEN_SPEED = 150 -- Studs per second
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
@@ -40,7 +42,7 @@ local function sendWebhook(targetUrl, payload)
 end
 
 local function teleportToClosestPoint(targetHeight)
-    -- Reverted to original paths as requested
+    -- This function remains unchanged as requested.
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
         {name = "The Void", path = "Workspace.Worlds.The Overworld.Islands.The Void.Island.Portal.Spawn", height = 10135},
@@ -77,9 +79,9 @@ local function findSafeLandingSpot(originalPosition)
 
     local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
 
-    if raycastResult and raycastResult.Instance.CanCollide then
+    if raycastResult and raycastResult.Instance and raycastResult.Instance.CanCollide then
         local groundPosition = raycastResult.Position
-        local finalTarget = groundPosition + Vector3.new(0, 3, 0)
+        local finalTarget = groundPosition + Vector3.new(0, 3, 0) -- Standard 3-stud offset from ground
         print("Safe landing spot found at: " .. tostring(finalTarget))
         return finalTarget
     else
@@ -89,9 +91,37 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- SIMPLIFIED & MONITORED TWEENING SYSTEM
+-- REMADE TWEENING SYSTEM (v2)
 -- =============================================
 
+-- A reusable function to create, run, and wait for a single tween to complete.
+local function executeTween(rootPart, targetCFrame, speed)
+    local distance = (rootPart.Position - targetCFrame.Position).Magnitude
+    if distance < 1 then return true end -- Skip if already there
+
+    local travelTime = distance / speed
+    local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
+    
+    tween:Play()
+
+    -- Wait for the tween to finish with a timeout
+    local startTime = tick()
+    local timeout = travelTime + 5 -- Give 5 extra seconds for safety
+    repeat
+        task.wait()
+    until tween.PlaybackState == Enum.PlaybackState.Completed or tick() - startTime > timeout
+
+    if tween.PlaybackState ~= Enum.PlaybackState.Completed then
+        warn("A tween segment failed to complete. State: " .. tostring(tween.PlaybackState))
+        tween:Cancel()
+        return false -- Indicate failure
+    end
+    
+    return true -- Indicate success
+end
+
+-- The main movement function using the new 3-part tweening logic.
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -102,41 +132,53 @@ local function performMovement(targetPosition)
         return
     end
 
-    -- 1. Create the Tween
-    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
-    if distance < 1 then return end -- Don't move if we are already there
-    
-    local time = distance / TWEEN_SPEED
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
-    
-    -- 2. Minimal State Change
+    -- 1. Setup and State Change
     local originalAutoRotate = humanoid.AutoRotate
+    local originalPlatformStand = humanoid.PlatformStand
     humanoid.AutoRotate = false
+    humanoid.PlatformStand = true -- Temporarily enables "flying" behavior, helpful for this method
+    task.wait(0.1) -- Allow state to apply
+
+    -- 2. Define Waypoints for 3-Part Movement
+    local startPosition = humanoidRootPart.Position
+    local ascentPoint = CFrame.new(startPosition.X, startPosition.Y + CLEARANCE_ALTITUDE, startPosition.Z)
+    local traversePoint = CFrame.new(targetPosition.X, ascentPoint.Position.Y, targetPosition.Z)
+    local finalDestination = CFrame.new(targetPosition)
+
+    -- 3. Execute Movement Sequence
+    print("Beginning 3-part movement...")
     
-    movementTween:Play()
-
-    -- 3. Monitored Wait with Timeout
-    local startTime = tick()
-    local timeout = time + 5 -- Give it 5 extra seconds to complete
-    repeat
-        task.wait()
-    until movementTween.PlaybackState == Enum.PlaybackState.Completed or movementTween.PlaybackState == Enum.PlaybackState.Cancelled or tick() - startTime > timeout
-
-    if movementTween.PlaybackState ~= Enum.PlaybackState.Completed then
-        warn("Tween did not complete successfully. State: " .. tostring(movementTween.PlaybackState))
-        movementTween:Cancel()
+    -- Part A: Ascend
+    print("Ascending to clearance altitude...")
+    if not executeTween(humanoidRootPart, ascentPoint, TWEEN_SPEED) then
+        warn("Failed to ascend. Aborting movement.")
+    else
+        -- Part B: Traverse
+        print("Traversing to target coordinates...")
+        if not executeTween(humanoidRootPart, traversePoint, TWEEN_SPEED) then
+            warn("Failed to traverse. Aborting movement.")
+        else
+            -- Part C: Descend
+            print("Descending to final landing spot...")
+            executeTween(humanoidRootPart, finalDestination, TWEEN_SPEED * 0.75) -- Descend slightly slower
+        end
     end
+    
+    print("Movement sequence finished. Stabilizing...")
 
-    -- 4. Stabilize and Restore
+    -- 4. Stabilize and Restore State (Crucial to prevent flinging)
+    humanoidRootPart.Velocity = Vector3.new(0, 0, 0) -- Kill all momentum
     humanoidRootPart.Anchored = true
-    task.wait(0.25)
+    task.wait(0.2) -- Hold position firmly
     humanoidRootPart.Anchored = false
+    humanoid.PlatformStand = originalPlatformStand
     humanoid.AutoRotate = originalAutoRotate
+    print("Character stabilized.")
 end
 
 -- =============================================
-
+-- AUTO-PRESS 'R' UTILITY
+-- =============================================
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
     getgenv().autoPressR = true
@@ -145,7 +187,7 @@ local function startAutoPressR()
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
             task.wait()
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-            task.wait()
+            task.wait(0.1) -- Small delay between presses
         end
     end)
 end
@@ -171,9 +213,9 @@ if riftInstance then
         
         task.wait(5) -- Wait for teleport to settle
         
-        print("Part 2: Preparing simplified movement...")
+        print("Part 2: Preparing remade movement...")
         performMovement(safeTargetPosition)
-        print("Movement finished.")
+        print("Main sequence finished.")
         
         startAutoPressR()
     end)
