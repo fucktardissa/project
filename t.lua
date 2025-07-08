@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v24 - "Kitchen Sink" Movement)
+    Validator & Reporter Script (v25 - Pathfinding Movement)
 ]]
 
 -- =============================================
@@ -9,7 +9,6 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 -- This is now studs per second
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -17,8 +16,7 @@ local TWEEN_SPEED = 150 -- This is now studs per second
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local PathfindingService = game:GetService("PathfindingService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -88,94 +86,61 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- ROBUST TWEENING SYSTEM V24
+-- NEW PATHFINDING MOVEMENT SYSTEM
 -- =============================================
 
-local currentMovementTween = nil
-
-local function cancelCurrentTween()
-    if currentMovementTween then
-        currentMovementTween:Cancel()
-        currentMovementTween = nil
-    end
-end
-
--- [*] MODIFIED: This function now uses every known technique to ensure a smooth, uninterrupted tween.
-local function performTweenMovement(humanoidRootPart, targetPosition)
-    local character = humanoidRootPart.Parent
+local function walkToTarget(targetPosition)
+    local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not rootPart then
+        warn("Pathfinding failed: Character models not found.")
+        return
+    end
 
-    cancelCurrentTween()
-
-    -- 1. Store the original state
-    local originalState = {
-        WalkSpeed = humanoid.WalkSpeed,
-        AutoRotate = humanoid.AutoRotate,
-        JumpPower = humanoid.JumpPower,
-        Gravity = workspace.Gravity
-    }
-
-    -- 2. Seize full control of the character
-    humanoid.PlatformStand = true -- Make character static
-    humanoid.AutoRotate = false
-    humanoid.WalkSpeed = 0
-    humanoid.JumpPower = 0
-    workspace.Gravity = 0 -- Disable gravity
-
-    -- 3. Create and play the tween
-    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
-    local time = distance / math.max(1, TWEEN_SPEED)
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local goals = {CFrame = CFrame.new(targetPosition)}
+    -- Create a path object
+    local path = PathfindingService:CreatePath()
     
-    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, goals)
-    currentMovementTween = movementTween
-    movementTween:Play()
+    -- Compute the path from current position to target
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(rootPart.Position, targetPosition)
+    end)
 
-    -- 4. Wait for completion
-    movementTween.Completed:Wait()
+    if not success or path.Status ~= Enum.PathStatus.Success then
+        warn("Pathfinding failed: Could not compute a valid path. Reason: " .. tostring(errorMessage or path.Status.Name))
+        -- As a fallback, try to walk directly to the target
+        humanoid:MoveTo(targetPosition)
+        humanoid.MoveToFinished:Wait(5) -- Wait up to 5 seconds for the fallback
+        return
+    end
 
-    -- 5. Stabilize at the destination to prevent flinging
-    humanoidRootPart.Anchored = true
-    task.wait(0.25) -- Short stabilization pause
-    humanoidRootPart.Anchored = false
+    print("Pathfinding successful. Following waypoints...")
+    local waypoints = path:GetWaypoints()
 
-    -- 6. Safely restore the character's state in the correct order
-    workspace.Gravity = originalState.Gravity
-    humanoid.PlatformStand = false
-    humanoid.WalkSpeed = originalState.WalkSpeed
-    humanoid.AutoRotate = originalState.AutoRotate
-    humanoid.JumpPower = originalState.JumpPower
-    
-    currentMovementTween = nil
-end
-
-local function tweenToTarget(targetPosition)
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
-
-    print("Part 2: Preparing movement...")
-
-    local retryAttempts = 0
-    local MAX_RETRIES = 3
-
-    while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 5 do
-        if retryAttempts > 0 then
-            warn("Player is too far from target after movement. Retrying... (Attempt " .. retryAttempts .. ")")
+    -- Follow the computed path
+    for _, waypoint in ipairs(waypoints) do
+        -- Check if the waypoint is an obstacle and move to the next if it is
+        if waypoint.Action == Enum.PathWaypointAction.Jump then
+            humanoid.Jump = true
         end
         
-        performTweenMovement(humanoidRootPart, targetPosition)
-        retryAttempts = retryAttempts + 1
+        humanoid:MoveTo(waypoint.Position)
+        
+        -- Wait until the character reaches the waypoint or a timeout occurs
+        local timeWaited = 0
+        while (rootPart.Position - waypoint.Position).Magnitude > 4 and timeWaited < 5 do
+            task.wait(0.1)
+            timeWaited = timeWaited + 0.1
+        end
+        
+        if timeWaited >= 5 then
+            warn("Pathfinding timeout: Took too long to reach a waypoint. Stopping.")
+            break
+        end
     end
-    
-    if (humanoidRootPart.Position - targetPosition).Magnitude <= 5 then
-        print("Movement successful. Arrived at target.")
-    else
-        warn("Failed to get player to target position after " .. MAX_RETRIES .. " retries.")
-    end
+    print("Path following complete.")
 end
+
 
 -- =============================================
 
@@ -211,32 +176,18 @@ if riftInstance then
         local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
         sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
         
-        task.wait(3)
+        -- Wait for teleport to settle
+        task.wait(5) 
         
-        tweenToTarget(safeTargetPosition)
+        -- Use the new pathfinding movement
+        walkToTarget(safeTargetPosition)
+        
         startAutoPressR()
     end)
 
     if not success then
-        warn("An error occurred during movement sequence: " .. tostring(errorMessage))
+        warn("An error occurred during main sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
-        
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hum then
-                hum.PlatformStand = false
-                hum.WalkSpeed = 16
-                hum.AutoRotate = true
-                hum.JumpPower = 50
-            end
-            if hrp then
-                hrp.Anchored = false
-            end
-        end
-        workspace.Gravity = 196.2 -- Default gravity
-        
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
