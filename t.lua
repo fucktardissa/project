@@ -1,8 +1,7 @@
 --[[
-    Validator & Reporter Script (v37 - Final Stabilization)
-    - Reworked the post-movement stabilization sequence to prevent character flinging.
-    - Anchors the character *before* re-enabling collisions to ensure stability.
-    - Slightly increased the safe landing height for better clearance.
+    Validator & Reporter Script (v38 - Altitude Adjustment)
+    - Based on user feedback, added an ALTITUDE_ADJUSTMENT variable.
+    - This manually lowers the final target height to prevent overshooting the platform and falling.
 ]]
 
 -- =============================================
@@ -14,6 +13,7 @@ local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/13913307763892
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 150
 local HORIZONTAL_SPEED = 35
+local ALTITUDE_ADJUSTMENT = 5 -- **NEW** Studs to lower the target height by to prevent overshooting.
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -77,7 +77,6 @@ local function findSafeLandingSpot(originalPosition)
     local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
     if raycastResult and raycastResult.Instance and raycastResult.Instance.CanCollide then
         local groundPosition = raycastResult.Position
-        -- Increased offset from 3 to 4 for better clearance
         local finalTarget = groundPosition + Vector3.new(0, 4, 0)
         print("Safe landing spot found at: " .. tostring(finalTarget))
         return finalTarget
@@ -88,7 +87,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- REFINED MOVEMENT SYSTEM
+-- REFINED MOVEMENT SYSTEM (THIS FUNCTION IS UPDATED)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
@@ -111,10 +110,13 @@ local function performMovement(targetPosition)
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
+    -- ** APPLY ALTITUDE ADJUSTMENT TO PREVENT OVERSHOOTING **
+    local adjustedTarget = targetPosition - Vector3.new(0, ALTITUDE_ADJUSTMENT, 0)
+
     -- 2. Phase 1: Smoothly tween vertically
     local startPos = humanoidRootPart.Position
-    local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
-    print("Part 2a: Smoothly tweening to target altitude...")
+    local intermediatePos = CFrame.new(startPos.X, adjustedTarget.Y, startPos.Z)
+    print("Part 2a: Smoothly tweening to adjusted target altitude...")
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     verticalTween:Play()
@@ -122,30 +124,22 @@ local function performMovement(targetPosition)
 
     -- 3. Phase 2: Slowly tween horizontally
     print("Part 2b: Slowly tweening to final destination...")
-    local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
-    local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
+    local horizontalTime = (humanoidRootPart.Position - adjustedTarget).Magnitude / HORIZONTAL_SPEED
+    local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(adjustedTarget)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
     -- 4. REFINED STABILIZATION SEQUENCE
     print("Destination reached. Stabilizing...")
-    
-    -- Step A: Kill all momentum and freeze the character in place FIRST.
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
-    
-    -- Step B: Now that the character is frozen, safely restore its state.
     humanoid.PlatformStand = originalPlatformStand
     for part, canCollide in pairs(originalCollisions) do
         if part and part.Parent then
             part.CanCollide = canCollide
         end
     end
-
-    -- Step C: Wait a moment for all properties to apply before unfreezing.
     task.wait(0.1)
-    
-    -- Step D: Unfreeze the character. It should now be stable.
     humanoidRootPart.Anchored = false
     print("Stabilization complete.")
 end
