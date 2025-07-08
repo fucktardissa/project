@@ -1,8 +1,9 @@
 --[[
-    Validator & Reporter Script (v41 - Smooth Camera)
-    - Implemented manual camera control during tweens to fix visual stuttering and lag.
-    - The camera is now set to "Scriptable" during movement for a smooth visual experience.
-    - This should be the final, polished version.
+    Validator & Reporter Script (v42 - Monitored Tween)
+    - Fixes the vertical overshoot problem by manually monitoring the tween.
+    - Instead of waiting for the tween to complete, it's cancelled as soon as the target altitude is reached.
+    - This provides more precise control and avoids end-of-tween physics glitches.
+    - Removed the flawed ALTITUDE_ADJUSTMENT variable.
 ]]
 
 -- =============================================
@@ -14,7 +15,6 @@ local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/13913307763892
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 500
 local HORIZONTAL_SPEED = 35
-local ALTITUDE_ADJUSTMENT = 0
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -89,30 +89,19 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- POLISHED MOVEMENT SYSTEM (with Smooth Camera)
+-- MOVEMENT SYSTEM (with Monitored Vertical Tween)
 -- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
-    local camera = workspace.CurrentCamera
 
-    if not (humanoid and humanoidRootPart and camera) then
-        error("Movement failed: Character parts or camera not found.")
+    if not (humanoid and humanoidRootPart) then
+        error("Movement failed: Character parts not found.")
     end
 
-    -- 1. Take control of the camera
-    print("Taking control of camera for smooth movement...")
-    local originalCameraType = camera.CameraType
-    camera.CameraType = Enum.CameraType.Scriptable
-    
-    local cameraConnection = RunService.RenderStepped:Connect(function()
-        local lookAtPosition = humanoidRootPart.Position + Vector3.new(0, 2, 0)
-        local cameraPosition = lookAtPosition + (humanoidRootPart.CFrame.LookVector * 10) + Vector3.new(0, 5, 15)
-        camera.CFrame = CFrame.new(cameraPosition, lookAtPosition)
-    end)
-
-    -- 2. Engage Ghost Mode
+    -- 1. Engage Ghost Mode
+    print("Engaging client-only ghost mode...")
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -123,25 +112,44 @@ local function performMovement(targetPosition)
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
 
-    -- 3. Perform movement tweens
-    local adjustedTarget = targetPosition - Vector3.new(0, ALTITUDE_ADJUSTMENT, 0)
+    -- 2. Phase 1: MONITORED tween vertically
     local startPos = humanoidRootPart.Position
-    local intermediatePos = CFrame.new(startPos.X, adjustedTarget.Y, startPos.Z)
-    
+    local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
+    print("Part 2a: Moving to target altitude...")
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
+    
     verticalTween:Play()
-    verticalTween.Completed:Wait()
-
-    local horizontalTime = (humanoidRootPart.Position - adjustedTarget).Magnitude / HORIZONTAL_SPEED
-    local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(adjustedTarget)})
+    
+    -- Instead of Completed:Wait(), we manually check the position every frame.
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        local currentY = humanoidRootPart.Position.Y
+        local targetY = intermediatePos.Position.Y
+        if math.abs(currentY - targetY) < 1 then -- Check if we are within 1 stud of the target height
+            print("Target altitude reached. Cancelling vertical tween.")
+            verticalTween:Cancel()
+            connection:Disconnect()
+        end
+    end)
+    
+    -- Wait until the tween is no longer playing (either completed or cancelled by our monitor)
+    while verticalTween.PlaybackState == Enum.PlaybackState.Playing do
+        task.wait()
+    end
+    if connection.Connected then -- Disconnect just in case the loop finished another way
+        connection:Disconnect()
+    end
+    
+    -- 3. Phase 2: Slowly tween horizontally
+    print("Part 2b: Slowly tweening to final destination...")
+    local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
+    local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
-    -- 4. Disconnect camera loop and stabilize character
-    cameraConnection:Disconnect()
-    print("Movement finished. Stabilizing...")
-    
+    -- 4. Stabilization
+    print("Destination reached. Stabilizing...")
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
@@ -151,12 +159,8 @@ local function performMovement(targetPosition)
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
     humanoidRootPart.Anchored = false
-    
-    -- 5. Return camera control to the game
-    camera.CameraType = originalCameraType
-    print("Stabilization and camera restore complete.")
+    print("Stabilization complete.")
 end
-
 
 -- =============================================
 -- AUTO-PRESS 'R' UTILITY
@@ -194,7 +198,7 @@ if riftInstance then
         
         task.wait(5)
         
-        print("Part 2: Preparing polished movement...")
+        print("Part 2: Preparing monitored movement...")
         performMovement(safeTargetPosition)
         
         print("Movement successful. Main sequence finished.")
