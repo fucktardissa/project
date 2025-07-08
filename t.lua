@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v23 - Anchoring Lock)
+    Validator & Reporter Script (v24 - "Kitchen Sink" Movement)
 ]]
 
 -- =============================================
@@ -88,7 +88,7 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- ROBUST TWEENING SYSTEM
+-- ROBUST TWEENING SYSTEM V24
 -- =============================================
 
 local currentMovementTween = nil
@@ -100,24 +100,7 @@ local function cancelCurrentTween()
     end
 end
 
-local function resetCharacterState(humanoid, originalState)
-    if humanoid and humanoid.Parent then
-        humanoid.WalkSpeed = originalState.WalkSpeed
-        humanoid.AutoRotate = originalState.AutoRotate
-        humanoid.JumpPower = originalState.JumpPower
-    end
-    workspace.Gravity = originalState.Gravity
-end
-
-local function createMovementTween(humanoidRootPart, targetPos, speed)
-    local distance = (humanoidRootPart.Position - targetPos).Magnitude
-    local time = distance / math.max(1, speed)
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local goals = {CFrame = CFrame.new(targetPos)}
-    return TweenService:Create(humanoidRootPart, tweenInfo, goals)
-end
-
--- [*] MODIFIED: This function now includes an anchoring lock to prevent flinging.
+-- [*] MODIFIED: This function now uses every known technique to ensure a smooth, uninterrupted tween.
 local function performTweenMovement(humanoidRootPart, targetPosition)
     local character = humanoidRootPart.Parent
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -125,6 +108,7 @@ local function performTweenMovement(humanoidRootPart, targetPosition)
 
     cancelCurrentTween()
 
+    -- 1. Store the original state
     local originalState = {
         WalkSpeed = humanoid.WalkSpeed,
         AutoRotate = humanoid.AutoRotate,
@@ -132,24 +116,38 @@ local function performTweenMovement(humanoidRootPart, targetPosition)
         Gravity = workspace.Gravity
     }
 
-    humanoid.WalkSpeed = 0
+    -- 2. Seize full control of the character
+    humanoid.PlatformStand = true -- Make character static
     humanoid.AutoRotate = false
+    humanoid.WalkSpeed = 0
     humanoid.JumpPower = 0
-    workspace.Gravity = 0
+    workspace.Gravity = 0 -- Disable gravity
 
-    local movementTween = createMovementTween(humanoidRootPart, targetPosition, TWEEN_SPEED)
+    -- 3. Create and play the tween
+    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local time = distance / math.max(1, TWEEN_SPEED)
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local goals = {CFrame = CFrame.new(targetPosition)}
+    
+    local movementTween = TweenService:Create(humanoidRootPart, tweenInfo, goals)
     currentMovementTween = movementTween
     movementTween:Play()
 
+    -- 4. Wait for completion
     movementTween.Completed:Wait()
 
-    -- New anchoring lock to stabilize the character and prevent flinging
+    -- 5. Stabilize at the destination to prevent flinging
     humanoidRootPart.Anchored = true
-    task.wait(0.5) -- Wait for a moment while anchored
+    task.wait(0.25) -- Short stabilization pause
     humanoidRootPart.Anchored = false
 
-    -- Now it's safe to restore the character's state
-    resetCharacterState(humanoid, originalState)
+    -- 6. Safely restore the character's state in the correct order
+    workspace.Gravity = originalState.Gravity
+    humanoid.PlatformStand = false
+    humanoid.WalkSpeed = originalState.WalkSpeed
+    humanoid.AutoRotate = originalState.AutoRotate
+    humanoid.JumpPower = originalState.JumpPower
+    
     currentMovementTween = nil
 end
 
@@ -177,8 +175,6 @@ local function tweenToTarget(targetPosition)
     else
         warn("Failed to get player to target position after " .. MAX_RETRIES .. " retries.")
     end
-
-    -- The old lock is no longer needed as the new anchoring lock is more effective.
 end
 
 -- =============================================
@@ -226,11 +222,20 @@ if riftInstance then
         getgenv().autoPressR = false 
         
         local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            resetCharacterState(hum, {WalkSpeed = 16, AutoRotate = true, JumpPower = 50, Gravity = workspace.Gravity})
-            hum.Parent:FindFirstChild("HumanoidRootPart").Anchored = false
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hum then
+                hum.PlatformStand = false
+                hum.WalkSpeed = 16
+                hum.AutoRotate = true
+                hum.JumpPower = 50
+            end
+            if hrp then
+                hrp.Anchored = false
+            end
         end
+        workspace.Gravity = 196.2 -- Default gravity
         
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
