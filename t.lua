@@ -1,5 +1,5 @@
 --[[
-    Validator & Reporter Script (v20 - PlatformStand Movement)
+    Validator & Reporter Script (v21 - User-Preferred Tweening System)
 ]]
 
 -- =============================================
@@ -9,7 +9,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 150 -- This is now studs per second
+local TWEEN_SPEED = 250 -- This is now studs per second
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -18,6 +18,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
@@ -86,80 +87,88 @@ local function findSafeLandingSpot(originalPosition)
     end
 end
 
-local function setPlayerCollision(canCollide)
-    local character = LocalPlayer.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = canCollide
-        end
+-- =============================================
+-- REPLACEMENT TWEENING SYSTEM
+-- =============================================
+
+local currentMovementTween = nil
+
+-- Cancels any active movement tween
+local function cancelCurrentTween()
+    if currentMovementTween then
+        currentMovementTween:Cancel()
+        currentMovementTween = nil
     end
 end
 
--- [*] MODIFIED: This function now uses PlatformStand to completely disable Humanoid physics during movement.
-local function executeMovement(humanoidRootPart, targetPosition)
+-- Resets the character's properties and workspace gravity to their original values
+local function resetCharacterState(humanoid, originalState)
+    if humanoid and humanoid.Parent then
+        humanoid.WalkSpeed = originalState.WalkSpeed
+        humanoid.AutoRotate = originalState.AutoRotate
+        humanoid.JumpPower = originalState.JumpPower
+    end
+    workspace.Gravity = originalState.Gravity
+end
+
+-- Creates the actual tween object using TweenService
+local function createMovementTween(humanoidRootPart, targetPos, speed)
+    local distance = (humanoidRootPart.Position - targetPos).Magnitude
+    local time = distance / math.max(1, speed)
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local goals = {CFrame = CFrame.new(targetPos)}
+    return TweenService:Create(humanoidRootPart, tweenInfo, goals)
+end
+
+-- This function performs the actual movement, replacing the old 'executeMovement'
+local function performTweenMovement(humanoidRootPart, targetPosition)
     local character = humanoidRootPart.Parent
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     if not humanoid then return end
 
-    -- Temporarily disable humanoid physics
-    humanoid.PlatformStand = true
-    setPlayerCollision(false)
+    cancelCurrentTween()
 
-    local startCFrame = humanoidRootPart.CFrame
-    local targetCFrame = CFrame.new(targetPosition)
-    local distance = (startCFrame.Position - targetCFrame.Position).Magnitude
-    
-    if distance < 1 then 
-        humanoid.PlatformStand = false
-        setPlayerCollision(true)
-        return 
-    end
+    local originalState = {
+        WalkSpeed = humanoid.WalkSpeed,
+        AutoRotate = humanoid.AutoRotate,
+        JumpPower = humanoid.JumpPower,
+        Gravity = workspace.Gravity
+    }
 
-    local duration = distance / TWEEN_SPEED
-    local elapsedTime = 0
-    
-    local connection
-    connection = RunService.Heartbeat:Connect(function(deltaTime)
-        elapsedTime = elapsedTime + deltaTime
-        local alpha = math.min(elapsedTime / duration, 1)
+    -- Disable character physics and gravity for a clean tween
+    humanoid.WalkSpeed = 0
+    humanoid.AutoRotate = false
+    humanoid.JumpPower = 0
+    workspace.Gravity = 0
 
-        humanoidRootPart.CFrame = startCFrame:Lerp(targetCFrame, alpha)
-        
-        if alpha >= 1 then
-            connection:Disconnect()
-            -- Restore physics and collisions AFTER movement is done
-            humanoid.PlatformStand = false
-            setPlayerCollision(true)
-        end
-    end)
-    
-    task.wait(duration + 1)
-    if connection.Connected then
-        connection:Disconnect()
-        -- Failsafe to restore physics and collisions
-        humanoid.PlatformStand = false
-        setPlayerCollision(true)
-    end
+    local movementTween = createMovementTween(humanoidRootPart, targetPosition, TWEEN_SPEED)
+    currentMovementTween = movementTween
+    movementTween:Play()
+
+    -- Wait for the tween to complete before proceeding
+    movementTween.Completed:Wait()
+
+    resetCharacterState(humanoid, originalState)
+    currentMovementTween = nil
 end
 
-
+-- High-level function that calls the movement logic and includes retries
 local function tweenToTarget(targetPosition)
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
     if not humanoidRootPart then return end
 
-    print("Part 2: Preparing redundant movement...")
+    print("Part 2: Preparing movement...")
 
     local retryAttempts = 0
     local MAX_RETRIES = 3
-    
+
     while retryAttempts < MAX_RETRIES and (humanoidRootPart.Position - targetPosition).Magnitude > 20 do
         if retryAttempts > 0 then
             warn("Player is too far from target after movement. Retrying... (Attempt " .. retryAttempts .. ")")
         end
         
-        executeMovement(humanoidRootPart, targetPosition)
+        performTweenMovement(humanoidRootPart, targetPosition)
         retryAttempts = retryAttempts + 1
     end
     
@@ -173,6 +182,8 @@ local function tweenToTarget(targetPosition)
     task.wait(3)
     print("Player unlocked.")
 end
+
+-- =============================================
 
 local function startAutoPressR()
     print("Starting to auto-press 'R' key...")
@@ -215,11 +226,14 @@ if riftInstance then
     if not success then
         warn("An error occurred during movement sequence: " .. tostring(errorMessage))
         getgenv().autoPressR = false 
-        setPlayerCollision(true)
-        -- Restore physics in case of an error
+        
+        -- Failsafe to restore physics in case of an error during the tween
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand = false end
+        if hum then
+             -- A default state to restore to
+            resetCharacterState(hum, {WalkSpeed = 16, AutoRotate = true, JumpPower = 50, Gravity = workspace.Gravity})
+        end
         
         local failurePayload = {content = "RIFT_SEARCH_FAILED"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
