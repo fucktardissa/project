@@ -1,7 +1,8 @@
 --[[
-    Validator & Reporter Script (v28 - Remade Tweening System)
-    - Implemented a 3-part (Up, Across, Down) tweening method to avoid obstacles.
-    - Improved post-movement stabilization to prevent character flinging.
+    Validator & Reporter Script (v29 - Pathfinding Implementation)
+    - Rebuilt movement to use PathfindingService for navigating complex obstacle fields.
+    - Character now follows a calculated path of waypoints to the destination.
+    - Added robust error handling for when a path cannot be found.
 ]]
 
 -- =============================================
@@ -11,8 +12,7 @@ local TARGET_EGG_NAME = "festival-rift-3"
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local TWEEN_SPEED = 200 -- Studs per second (increased for efficiency with the new system)
-local CLEARANCE_ALTITUDE = 150 -- Studs to ascend to avoid obstacles
+local TWEEN_SPEED = 150 -- Studs per second
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -21,12 +21,13 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local PathfindingService = game:GetService("PathfindingService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
 -- =============================================
--- UTILITY FUNCTIONS
+-- UTILITY FUNCTIONS (Unchanged)
 -- =============================================
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
@@ -42,7 +43,6 @@ local function sendWebhook(targetUrl, payload)
 end
 
 local function teleportToClosestPoint(targetHeight)
-    -- This function remains unchanged as requested.
     local teleportPoints = {
         {name = "Zen", path = "Workspace.Worlds.The Overworld.Islands.Zen.Island.Portal.Spawn", height = 15970},
         {name = "The Void", path = "Workspace.Worlds.The Overworld.Islands.The Void.Island.Portal.Spawn", height = 10135},
@@ -81,7 +81,7 @@ local function findSafeLandingSpot(originalPosition)
 
     if raycastResult and raycastResult.Instance and raycastResult.Instance.CanCollide then
         local groundPosition = raycastResult.Position
-        local finalTarget = groundPosition + Vector3.new(0, 3, 0) -- Standard 3-stud offset from ground
+        local finalTarget = groundPosition + Vector3.new(0, 3, 0)
         print("Safe landing spot found at: " .. tostring(finalTarget))
         return finalTarget
     else
@@ -91,37 +91,10 @@ local function findSafeLandingSpot(originalPosition)
 end
 
 -- =============================================
--- REMADE TWEENING SYSTEM (v2)
+-- REMADE TWEENING SYSTEM (v3 - Pathfinding)
 -- =============================================
 
--- A reusable function to create, run, and wait for a single tween to complete.
-local function executeTween(rootPart, targetCFrame, speed)
-    local distance = (rootPart.Position - targetCFrame.Position).Magnitude
-    if distance < 1 then return true end -- Skip if already there
-
-    local travelTime = distance / speed
-    local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
-    local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
-    
-    tween:Play()
-
-    -- Wait for the tween to finish with a timeout
-    local startTime = tick()
-    local timeout = travelTime + 5 -- Give 5 extra seconds for safety
-    repeat
-        task.wait()
-    until tween.PlaybackState == Enum.PlaybackState.Completed or tick() - startTime > timeout
-
-    if tween.PlaybackState ~= Enum.PlaybackState.Completed then
-        warn("A tween segment failed to complete. State: " .. tostring(tween.PlaybackState))
-        tween:Cancel()
-        return false -- Indicate failure
-    end
-    
-    return true -- Indicate success
-end
-
--- The main movement function using the new 3-part tweening logic.
+-- Main movement function now using PathfindingService
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -132,46 +105,58 @@ local function performMovement(targetPosition)
         return
     end
 
-    -- 1. Setup and State Change
-    local originalAutoRotate = humanoid.AutoRotate
-    local originalPlatformStand = humanoid.PlatformStand
-    humanoid.AutoRotate = false
-    humanoid.PlatformStand = true -- Temporarily enables "flying" behavior, helpful for this method
-    task.wait(0.1) -- Allow state to apply
+    -- 1. Create a Path object with parameters for our character
+    -- These parameters tell the pathfinder the size of our character to avoid tight spaces.
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 3,
+        AgentHeight = 6,
+        AgentCanJump = false
+    })
 
-    -- 2. Define Waypoints for 3-Part Movement
-    local startPosition = humanoidRootPart.Position
-    local ascentPoint = CFrame.new(startPosition.X, startPosition.Y + CLEARANCE_ALTITUDE, startPosition.Z)
-    local traversePoint = CFrame.new(targetPosition.X, ascentPoint.Position.Y, targetPosition.Z)
-    local finalDestination = CFrame.new(targetPosition)
+    -- 2. Compute the path from our current location to the safe target position
+    print("Calculating path to destination...")
+    local success, err = pcall(function()
+        path:ComputeAsync(humanoidRootPart.Position, targetPosition)
+    end)
 
-    -- 3. Execute Movement Sequence
-    print("Beginning 3-part movement...")
-    
-    -- Part A: Ascend
-    print("Ascending to clearance altitude...")
-    if not executeTween(humanoidRootPart, ascentPoint, TWEEN_SPEED) then
-        warn("Failed to ascend. Aborting movement.")
-    else
-        -- Part B: Traverse
-        print("Traversing to target coordinates...")
-        if not executeTween(humanoidRootPart, traversePoint, TWEEN_SPEED) then
-            warn("Failed to traverse. Aborting movement.")
-        else
-            -- Part C: Descend
-            print("Descending to final landing spot...")
-            executeTween(humanoidRootPart, finalDestination, TWEEN_SPEED * 0.75) -- Descend slightly slower
-        end
+    if not success or path.Status ~= Enum.PathStatus.Success then
+        warn("Could not compute a valid path to the destination. Status: " .. tostring(path.Status))
+        return -- Abort movement if no path exists
     end
-    
-    print("Movement sequence finished. Stabilizing...")
 
-    -- 4. Stabilize and Restore State (Crucial to prevent flinging)
-    humanoidRootPart.Velocity = Vector3.new(0, 0, 0) -- Kill all momentum
+    print("Path calculated successfully. Following waypoints...")
+    local waypoints = path:GetWaypoints()
+
+    -- 3. Setup character state for movement
+    local originalAutoRotate = humanoid.AutoRotate
+    humanoid.AutoRotate = false
+    humanoid.PlatformStand = true
+
+    -- 4. Move the character along each waypoint in the path
+    for i, waypoint in ipairs(waypoints) do
+        -- We can often skip the first waypoint as it's the start position
+        if i == 1 and (waypoint.Position - humanoidRootPart.Position).Magnitude < 2 then
+            continue
+        end
+
+        print(string.format("Moving to waypoint %d/%d at %s", i, #waypoints, tostring(waypoint.Position)))
+        
+        local distance = (humanoidRootPart.Position - waypoint.Position).Magnitude
+        local timeToWaypoint = distance / TWEEN_SPEED
+        local tween = TweenService:Create(humanoidRootPart, TweenInfo.new(timeToWaypoint, Enum.EasingStyle.Linear), {CFrame = CFrame.new(waypoint.Position)})
+        
+        tween:Play()
+        tween.Completed:Wait() -- Wait for each small tween to finish before starting the next
+    end
+
+    print("Final waypoint reached. Stabilizing...")
+
+    -- 5. Stabilize and Restore State
+    humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
-    task.wait(0.2) -- Hold position firmly
+    task.wait(0.2)
     humanoidRootPart.Anchored = false
-    humanoid.PlatformStand = originalPlatformStand
+    humanoid.PlatformStand = false
     humanoid.AutoRotate = originalAutoRotate
     print("Character stabilized.")
 end
@@ -187,7 +172,7 @@ local function startAutoPressR()
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
             task.wait()
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-            task.wait(0.1) -- Small delay between presses
+            task.wait(0.1)
         end
     end)
 end
@@ -201,11 +186,13 @@ local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
 
 if riftInstance then
     local success, errorMessage = pcall(function()
-        print("Target found! Beginning two-part movement sequence.")
+        print("Target found! Beginning sequence.")
         
+        -- First, find the exact safe coordinate to land on
         local riftPosition = riftInstance:GetPivot().Position
         local safeTargetPosition = findSafeLandingSpot(riftPosition)
         
+        -- Then, teleport to the closest major area
         teleportToClosestPoint(math.floor(riftPosition.Y))
         
         local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
@@ -213,7 +200,8 @@ if riftInstance then
         
         task.wait(5) -- Wait for teleport to settle
         
-        print("Part 2: Preparing remade movement...")
+        -- Finally, use pathfinding to navigate from the teleport spot to the safe landing spot
+        print("Part 2: Preparing pathfinding movement...")
         performMovement(safeTargetPosition)
         print("Main sequence finished.")
         
@@ -222,14 +210,14 @@ if riftInstance then
 
     if not success then
         warn("An error occurred during main sequence: " .. tostring(errorMessage))
-        getgenv().autoPressR = false 
-        local failurePayload = {content = "RIFT_SEARCH_FAILED"}
+        getgenv().autoPressR = false
+        local failurePayload = {content = "RIFT_SEARCH_FAILED_DURING_EXECUTION"}
         sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
     end
 else
     print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
-    getgenv().autoPressR = false 
-    local failurePayload = {content = "RIFT_SEARCH_FAILED"}
+    getgenv().autoPressR = false
+    local failurePayload = {content = "RIFT_SEARCH_FAILED_NOT_FOUND"}
     sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
 end
 
