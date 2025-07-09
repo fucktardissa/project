@@ -1,19 +1,22 @@
 --[[
-    Validator & Reporter Script (v45 - Whitelist Raycast)
-    - Implemented user's suggestion for a more reliable landing spot detection.
-    - findSafeLandingSpot now uses a "whitelist" raycast.
-    - It will ONLY detect hits on the island that the target rift is a part of, ignoring all other geometry like clouds.
+    Validator & Reporter Script (v47 - AUTO Mode)
+    - Implemented a fully automatic mode as requested.
+    - A toggle "getgenv().AUTO_MODE_ENABLED" at the top can be used to start/stop the script.
+    - The script now runs in a continuous loop, checking for "festival-rift-1", "festival-rift-2", and "festival-rift-3" every second.
+    - When a rift is found, it automatically tweens to and opens it, then resumes searching.
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
-local TARGET_EGG_NAME = "festival-rift-3"
+getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
+
+local RIFT_NAMES_TO_SEARCH = {"festival-rift-1", "festival-rift-2", "festival-rift-3"}
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local VERTICAL_SPEED = 500
-local HORIZONTAL_SPEED = 35
+local VERTICAL_SPEED = 150
+local HORIZONTAL_SPEED = 45
 
 -- =============================================
 -- SERVICES & REFERENCES
@@ -66,11 +69,10 @@ local function teleportToClosestPoint(targetHeight)
     end
 end
 
--- THIS FUNCTION HAS BEEN COMPLETELY REBUILT WITH YOUR SUGGESTION
 local function findSafeLandingSpot(riftInstance)
     print("Finding a safe landing spot using a whitelisted raycast...")
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local islandModel = riftInstance.Parent -- The model containing the rift and its island parts
+    local islandModel = riftInstance.Parent
 
     if not islandModel then
         warn("Could not find parent model of the rift.")
@@ -78,8 +80,8 @@ local function findSafeLandingSpot(riftInstance)
     end
 
     local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Include -- Use a WHITELIST
-    raycastParams.FilterDescendantsInstances = {islandModel} -- Only target parts within the island model
+    raycastParams.FilterType = Enum.RaycastFilterType.Include
+    raycastParams.FilterDescendantsInstances = {islandModel}
     raycastParams.IgnoreWater = true
 
     local originalPosition = riftInstance:GetPivot().Position
@@ -91,26 +93,31 @@ local function findSafeLandingSpot(riftInstance)
     if rayResult and rayResult.Instance then
         local groundPosition = rayResult.Position
         local finalTarget = groundPosition + Vector3.new(0, 4, 0)
-        print("Safe landing spot found on target island at: " .. tostring(finalTarget))
         return finalTarget
     else
         warn("Whitelist raycast failed to find the target island ground.")
-        -- Fallback to a position just above the rift's pivot as a last resort
         return originalPosition + Vector3.new(0, 4, 0)
     end
 end
 
--- =============================================
--- MOVEMENT SYSTEM (Unchanged from v43)
--- =============================================
 local function performMovement(targetPosition)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
 
-    if not (humanoid and humanoidRootPart) then
-        error("Movement failed: Character parts not found.")
+    if not (humanoid and humanoidRootPart and camera) then
+        error("Movement failed: Character parts or camera not found.")
     end
+
+    local originalCameraType = camera.CameraType
+    camera.CameraType = Enum.CameraType.Scriptable
+    
+    local cameraConnection = RunService.RenderStepped:Connect(function()
+        local lookAtPosition = humanoidRootPart.Position + Vector3.new(0, 2, 0)
+        local cameraPosition = lookAtPosition + Vector3.new(0, 5, 20)
+        camera.CFrame = CFrame.new(cameraPosition, lookAtPosition)
+    end)
 
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
@@ -121,29 +128,19 @@ local function performMovement(targetPosition)
 
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
+    
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
-    
     verticalTween:Play()
-    
-    local direction = (intermediatePos.Position.Y > startPos.Y) and "UP" or "DOWN"
-    local targetY = intermediatePos.Position.Y
-    local connection = RunService.Heartbeat:Connect(function()
-        local currentY = humanoidRootPart.Position.Y
-        local conditionMet = (direction == "UP" and currentY >= targetY) or (direction == "DOWN" and currentY <= targetY)
-        if conditionMet then
-            verticalTween:Cancel()
-        end
-    end)
-    
     verticalTween.Completed:Wait()
-    connection:Disconnect()
-    
+
     local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
 
+    cameraConnection:Disconnect()
+    
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
@@ -153,63 +150,76 @@ local function performMovement(targetPosition)
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
     humanoidRootPart.Anchored = false
+    
+    camera.CameraType = originalCameraType
 end
 
--- =============================================
--- AUTO-PRESS 'R' UTILITY & MAIN EXECUTION
--- =============================================
-local function startAutoPressR()
-    print("Starting to auto-press 'R' key...")
-    getgenv().autoPressR = true
-    task.spawn(function()
-        while getgenv().autoPressR do
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-            task.wait()
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-            task.wait(0.1)
-        end
-    end)
-end
-
-print("Validator/Reporter Script Started. Searching for: " .. TARGET_EGG_NAME)
-local riftInstance = RIFT_PATH:WaitForChild(TARGET_EGG_NAME, 15)
-
-if riftInstance then
-    local success, errorMessage = pcall(function()
-        print("Target found! Beginning sequence.")
-        
-        -- The function call is updated to pass the riftInstance
-        local safeTargetPosition = findSafeLandingSpot(riftInstance)
-        
-        if not safeTargetPosition then
-            error("Could not determine a safe landing spot on the target island.")
-        end
-        
-        teleportToClosestPoint(math.floor(safeTargetPosition.Y))
-        
-        local successPayload = {embeds = {{title = "✅ EGG FOUND! Movement Started!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
-        sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
-        
-        task.wait(5)
-        
-        print("Part 2: Preparing whitelisted movement...")
-        performMovement(safeTargetPosition)
-        
-        print("Movement successful. Main sequence finished.")
-        startAutoPressR()
-    end)
-
-    if not success then
-        warn("An error occurred during main sequence: " .. tostring(errorMessage))
-        getgenv().autoPressR = false
-        local failurePayload = {content = "RIFT_SEARCH_FAILED: " .. tostring(errorMessage)}
-        sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+-- Renamed and simplified for the new auto-loop
+local function openRift()
+    print("Attempting to open rift by pressing 'R'...")
+    local pressDuration = 3 -- Press 'R' repeatedly for 3 seconds
+    local startTime = tick()
+    while tick() - startTime < pressDuration do
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+        task.wait()
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+        task.wait(0.1)
     end
-else
-    print("Target '" .. TARGET_EGG_NAME .. "' not found after 15 seconds. Sending failure report.")
-    getgenv().autoPressR = false
-    local failurePayload = {content = "RIFT_SEARCH_FAILED_NOT_FOUND"}
-    sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+    print("Finished opening rift.")
 end
 
-print("Validator/Reporter Script has completed its run.")
+-- =============================================
+-- MAIN EXECUTION (AUTO MODE)
+-- =============================================
+print("AUTO Rift Script v47 Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+
+task.spawn(function()
+    while getgenv().AUTO_MODE_ENABLED do
+        local riftFoundAndProcessed = false
+        
+        -- Iterate through the possible rift names
+        for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
+            local riftInstance = RIFT_PATH:FindFirstChild(riftName)
+            
+            if riftInstance then
+                print("Target found: " .. riftName)
+                
+                local success, errorMessage = pcall(function()
+                    local safeTargetPosition = findSafeLandingSpot(riftInstance)
+                    if not safeTargetPosition then
+                        error("Could not determine a safe landing spot for " .. riftName)
+                    end
+                    
+                    teleportToClosestPoint(math.floor(safeTargetPosition.Y))
+                    local successPayload = {embeds = {{title = "✅ "..riftName.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+                    sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
+                    
+                    task.wait(5)
+                    
+                    print("Preparing polished movement...")
+                    performMovement(safeTargetPosition)
+                    
+                    print("Movement successful. Opening rift...")
+                    openRift()
+                end)
+
+                if success then
+                    print("Successfully processed " .. riftName .. ". Cooling down before next search.")
+                    riftFoundAndProcessed = true
+                    break -- Exit the for loop to start the cooldown
+                else
+                    warn("An error occurred while processing " .. riftName .. ": " .. tostring(errorMessage))
+                    local failurePayload = {content = "RIFT_PROCESS_FAILED: " .. tostring(errorMessage)}
+                    sendWebhook(FAILURE_WEBHOOK_URL, failurePayload)
+                end
+            end
+        end
+        
+        if riftFoundAndProcessed then
+            task.wait(10) -- Wait longer after processing a rift
+        else
+            task.wait(1) -- Standard 1-second check interval
+        end
+    end
+    print("AUTO Rift script stopped because toggle was set to false.")
+end)
