@@ -14,7 +14,7 @@ local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "festival-rift-2", "festival-ri
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
-local VERTICAL_SPEED = 150
+local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 45
 
 -- =============================================
