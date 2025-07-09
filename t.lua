@@ -15,7 +15,7 @@ local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/13913307763892
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 300
-local HORIZONTAL_SPEED = 45
+local HORIZONTAL_SPEED = 30
 
 -- =============================================
 -- SERVICES & REFERENCES
