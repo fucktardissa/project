@@ -1,9 +1,6 @@
 --[[
-    Validator & Reporter Script (v47 - AUTO Mode)
-    - Implemented a fully automatic mode as requested.
-    - A toggle "getgenv().AUTO_MODE_ENABLED" at the top can be used to start/stop the script.
-    - The script now runs in a continuous loop, checking for "festival-rift-1", "festival-rift-2", and "festival-rift-3" every second.
-    - When a rift is found, it automatically tweens to and opens it, then resumes searching.
+    Validator & Reporter Script (v48 - Search Priority)
+    - Reordered the RIFT_NAMES_TO_SEARCH list to prioritize rifts in the order 3, 2, then 1 as requested.
 ]]
 
 -- =============================================
@@ -11,7 +8,9 @@
 -- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
 
-local RIFT_NAMES_TO_SEARCH = {"festival-rift-1", "festival-rift-2", "festival-rift-3"}
+-- ** THIS LINE HAS BEEN UPDATED WITH THE NEW PRIORITY **
+local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "festival-rift-2", "festival-rift-1"}
+
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
@@ -154,10 +153,9 @@ local function performMovement(targetPosition)
     camera.CameraType = originalCameraType
 end
 
--- Renamed and simplified for the new auto-loop
 local function openRift()
     print("Attempting to open rift by pressing 'R'...")
-    local pressDuration = 3 -- Press 'R' repeatedly for 3 seconds
+    local pressDuration = 3 
     local startTime = tick()
     while tick() - startTime < pressDuration do
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
@@ -171,13 +169,12 @@ end
 -- =============================================
 -- MAIN EXECUTION (AUTO MODE)
 -- =============================================
-print("AUTO Rift Script v47 Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Rift Script v48 Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         local riftFoundAndProcessed = false
         
-        -- Iterate through the possible rift names
         for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
             local riftInstance = RIFT_PATH:FindFirstChild(riftName)
             
@@ -206,7 +203,7 @@ task.spawn(function()
                 if success then
                     print("Successfully processed " .. riftName .. ". Cooling down before next search.")
                     riftFoundAndProcessed = true
-                    break -- Exit the for loop to start the cooldown
+                    break
                 else
                     warn("An error occurred while processing " .. riftName .. ": " .. tostring(errorMessage))
                     local failurePayload = {content = "RIFT_PROCESS_FAILED: " .. tostring(errorMessage)}
@@ -216,9 +213,9 @@ task.spawn(function()
         end
         
         if riftFoundAndProcessed then
-            task.wait(10) -- Wait longer after processing a rift
+            task.wait(10)
         else
-            task.wait(1) -- Standard 1-second check interval
+            task.wait(1)
         end
     end
     print("AUTO Rift script stopped because toggle was set to false.")
