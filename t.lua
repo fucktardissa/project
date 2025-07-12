@@ -256,7 +256,7 @@ task.spawn(function()
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
                 print("Max failed searches reached. Waiting 10 seconds before server hopping...")
-                task.wait(10)
+                task.wait(1)
                 simpleServerHop()
                 failedSearchCounter = 0
             end
