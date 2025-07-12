@@ -1,8 +1,8 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
---fin
-local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
+
+local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
 
@@ -13,7 +13,7 @@ local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 30
 local PROXIMITY_DISTANCE = 15
 local ENGAGEMENT_COOLDOWN = 15 -- Cooldown in seconds after finishing with a rift
-wait(10)
+
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -188,33 +188,30 @@ local function performAutoHatch()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
-print("AUTO Script (State Management Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (Global Lock Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
-local isEngaged = false -- Renamed for clarity
+-- Initialize a GLOBAL lock to prevent race conditions from multiple script executions.
+getgenv().isEngagedWithRift = getgenv().isEngagedWithRift or false
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         task.wait(1)
 
-        if isEngaged then
+        if getgenv().isEngagedWithRift then
             continue
         end
 
         local targetRiftInstance = findBestAvailableRift()
 
         if targetRiftInstance then
-            -- =================================================================
-            -- START OF UNIFIED ENGAGEMENT BLOCK
-            -- =================================================================
-            isEngaged = true -- Set the lock IMMEDIATELY
+            getgenv().isEngagedWithRift = true -- Set the global lock
             failedSearchCounter = 0
             
             if not notifiedAboutRift[targetRiftInstance] then
                 print("New valid rift "..targetRiftInstance.Name.." located. Engaging.")
-                local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
-                sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
+                sendWebhook(SUCCESS_WEBHOOK_URL, {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}})
                 notifiedAboutRift[targetRiftInstance] = true
             end
 
@@ -241,17 +238,14 @@ task.spawn(function()
             notifiedAboutRift[targetRiftInstance] = nil
             task.wait(ENGAGEMENT_COOLDOWN)
             
-            isEngaged = false -- Release the lock ONLY at the very end
-            -- =================================================================
-            -- END OF UNIFIED ENGAGEMENT BLOCK
-            -- =================================================================
+            getgenv().isEngagedWithRift = false -- Release the global lock
 
         elseif getgenv().AUTO_HATCH_ENABLED then
             if not isNearLocation(AUTO_HATCH_POSITION) then
-                isEngaged = true
+                getgenv().isEngagedWithRift = true
                 print("No valid rifts found. Moving to auto-hatch position.")
                 pcall(performMovement, AUTO_HATCH_POSITION)
-                isEngaged = false
+                getgenv().isEngagedWithRift = false
             else
                 performAutoHatch()
             end
@@ -261,7 +255,7 @@ task.spawn(function()
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
                 print("Max failed searches reached. Waiting 10 seconds before server hopping...")
-                task.wait(20)
+                task.wait(10)
                 simpleServerHop()
                 failedSearchCounter = 0
             end
