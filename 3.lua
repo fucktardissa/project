@@ -4,7 +4,7 @@ getgenv().LUCK_25X_ONLY_MODE = true
 
 local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
-local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
+local MOVEMENT_MAX_ATTEMPTS = 3 -- Max number of times to try moving before giving up
 
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local VERTICAL_SPEED = 300
@@ -21,23 +21,16 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
--- =================================================================
--- NEW MANUAL MOVEMENT FUNCTION (DOES NOT USE TWEENSERVICE)
--- =================================================================
 local function performMovement(targetPosition)
-    print("--- Using MANUAL movement function ---")
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not (humanoid and humanoidRootPart) then return end
 
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = false end
-    end
+    for _, part in ipairs(character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
     humanoid.PlatformStand = true
     humanoidRootPart.Anchored = true
 
-    -- == Vertical Movement ==
     local startCFrameV = humanoidRootPart.CFrame
     local endCFrameV = CFrame.new(startCFrameV.Position.X, targetPosition.Y, startCFrameV.Position.Z)
     local durationV = (startCFrameV.Position - endCFrameV.Position).Magnitude / VERTICAL_SPEED
@@ -45,12 +38,10 @@ local function performMovement(targetPosition)
     while elapsedV < durationV do
         local dt = RunService.Heartbeat:Wait()
         elapsedV = math.min(elapsedV + dt, durationV)
-        local alpha = elapsedV / durationV
-        humanoidRootPart.CFrame = startCFrameV:Lerp(endCFrameV, alpha)
+        humanoidRootPart.CFrame = startCFrameV:Lerp(endCFrameV, elapsedV / durationV)
     end
-    humanoidRootPart.CFrame = endCFrameV -- Snap to end to ensure accuracy
+    humanoidRootPart.CFrame = endCFrameV
 
-    -- == Horizontal Movement ==
     local startCFrameH = humanoidRootPart.CFrame
     local endCFrameH = CFrame.new(targetPosition)
     local durationH = (startCFrameH.Position - endCFrameH.Position).Magnitude / HORIZONTAL_SPEED
@@ -58,11 +49,9 @@ local function performMovement(targetPosition)
     while elapsedH < durationH do
         local dt = RunService.Heartbeat:Wait()
         elapsedH = math.min(elapsedH + dt, durationH)
-        local alpha = elapsedH / durationH
-        humanoidRootPart.CFrame = startCFrameH:Lerp(endCFrameH, alpha)
+        humanoidRootPart.CFrame = startCFrameH:Lerp(endCFrameH, elapsedH / durationH)
     end
-    humanoidRootPart.CFrame = endCFrameH -- Snap to end
-    print("--- MANUAL movement complete ---")
+    humanoidRootPart.CFrame = endCFrameH
 end
 
 local function restoreCharacterState()
@@ -70,9 +59,7 @@ local function restoreCharacterState()
     if not character then return end
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if humanoidRootPart then humanoidRootPart.Anchored = false end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = true end
-    end
+    for _, part in ipairs(character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
     print("Character state restored to normal.")
@@ -88,9 +75,7 @@ local function findBestAvailableRift()
     local allRiftsInServer = RIFT_PATH:GetChildren()
     for _, riftObject in ipairs(allRiftsInServer) do
         local has25xLuck = false
-        pcall(function()
-            if string.find(riftObject.Display.SurfaceGui.Icon.Luck.Text, "25") then has25xLuck = true end
-        end)
+        pcall(function() if string.find(riftObject.Display.SurfaceGui.Icon.Luck.Text, "25") then has25xLuck = true end end)
         if has25xLuck then
             for _, targetName in ipairs(RIFT_NAMES_TO_SEARCH) do
                 if riftObject.Name == targetName then return riftObject end
@@ -164,7 +149,7 @@ local function openRift()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
 
-print("AUTO Script (Manual Tween) Loaded.")
+print("AUTO Script (Retry Loop) Loaded.")
 getgenv().isEngagedWithRift = getgenv().isEngagedWithRift or false
 
 task.spawn(function()
@@ -183,35 +168,52 @@ task.spawn(function()
         if targetRift then
             getgenv().isEngagedWithRift = true
             local safeSpot = findSafeLandingSpot(targetRift)
-            if safeSpot and not isNearLocation(safeSpot) then
-                print("Found valid rift "..targetRift.Name..". Moving into position...")
-                sendWebhook(SUCCESS_WEBHOOK_URL, {embeds = {{title = "✅ "..targetRift.Name.." FOUND!", color = 3066993}}})
-                
-                local preTeleportPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
-                teleportToClosestPoint(safeSpot.Y)
-                
-                if preTeleportPosition then
-                    print("Waiting for teleport to complete...")
-                    local timeout = 15
-                    local timeWaited = 0
-                    while LocalPlayer.Character and (LocalPlayer.Character.HumanoidRootPart.Position - preTeleportPosition).Magnitude < 100 and timeWaited < timeout do
-                        task.wait(0.2)
-                        timeWaited = timeWaited + 0.2
-                    end
-                else
-                    task.wait(5) -- Fallback wait if character didn't exist initially
-                end
-                
-                performMovement(safeSpot)
-            end
-            
-            print("Arrived at '"..targetRift.Name.."'. Restoring character to hatch.")
-            restoreCharacterState()
-            
-            print("Waiting for rift to disappear...")
-            repeat task.wait(0.5) until not (targetRift and targetRift.Parent)
+            local movementSuccess = false
 
-            print("Rift is gone. Resuming search.")
+            if safeSpot and not isNearLocation(safeSpot) then
+                local attempts = 0
+                repeat
+                    attempts = attempts + 1
+                    print(string.format("Attempting to move to rift (Attempt %d/%d)...", attempts, MOVEMENT_MAX_ATTEMPTS))
+                    
+                    local preTeleportPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
+                    teleportToClosestPoint(safeSpot.Y)
+                    
+                    if preTeleportPosition then
+                        local timeout = 15; local timeWaited = 0
+                        while LocalPlayer.Character and (LocalPlayer.Character.HumanoidRootPart.Position - preTeleportPosition).Magnitude < 100 and timeWaited < timeout do
+                            task.wait(0.2); timeWaited = timeWaited + 0.2
+                        end
+                    else
+                        task.wait(5)
+                    end
+                    
+                    performMovement(safeSpot)
+                    task.wait(1) -- Wait a second for anti-cheat to act
+                    
+                    if isNearLocation(safeSpot) then
+                        print("Movement successful and position verified.")
+                        movementSuccess = true
+                    else
+                        warn("Movement failed or was reverted. Retrying in 2 seconds...")
+                        task.wait(2)
+                    end
+                until movementSuccess or attempts >= MOVEMENT_MAX_ATTEMPTS
+            else
+                movementSuccess = true -- Already near, so movement is considered successful
+            end
+
+            if movementSuccess then
+                print("Arrived at '"..targetRift.Name.."'. Restoring character to hatch.")
+                restoreCharacterState()
+                
+                print("Waiting for rift to disappear...")
+                repeat task.wait(0.5) until not (targetRift and targetRift.Parent)
+            else
+                warn("Failed to move to rift after " .. MOVEMENT_MAX_ATTEMPTS .. " attempts. Aborting.")
+            end
+
+            print("Engagement finished. Resuming search.")
             getgenv().isEngagedWithRift = false
         else
             if not _G.failedSearchCounter then _G.failedSearchCounter = 0 end
