@@ -1,7 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
---hohohohohoho
+--ohu;wsrgahiurgaeuhklasrglhukasgerlhukjalshkjeglkhjsagdlhjksgadlkhjgsdlalaskhgb
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -255,6 +255,8 @@ task.spawn(function()
             failedSearchCounter = failedSearchCounter + 1
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
+                print("Max failed searches reached. Waiting 10 seconds before server hopping...")
+                task.wait(10)
                 simpleServerHop()
                 failedSearchCounter = 0
             end
