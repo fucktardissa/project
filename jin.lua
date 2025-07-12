@@ -204,7 +204,7 @@ task.spawn(function()
             _G.failedSearchCounter = _G.failedSearchCounter + 1
             print("Search " .. _G.failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete.")
             if _G.failedSearchCounter >= MAX_FAILED_SEARCHES then
-                task.wait(10)
+                task.wait(1)
                 simpleServerHop()
                 _G.failedSearchCounter = 0
             end
