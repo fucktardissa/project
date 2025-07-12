@@ -1,12 +1,3 @@
---[[
-    Validator & Reporter Script (v53 - Movement Lock)
-    - Added a state lock (isMovingToTarget) to prevent the engagement sequence from firing multiple times.
-    - This fixes the issue of spammed console messages and overlapping/broken tweens.
-]]
-
--- =============================================
--- CONFIGURATION (Edit These Values)
--- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
 getgenv().AUTO_HATCH_ENABLED = false -- Set to true to enable the auto-hatch fallback routine
 getgenv().LUCK_25X_ONLY_MODE = false -- NEW: Set to true to only engage with x25 luck rifts
@@ -22,9 +13,6 @@ local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 30
 local PROXIMITY_DISTANCE = 15 -- How close to be to a target to be considered "near"
 
--- =============================================
--- SERVICES & REFERENCES
--- =============================================
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,20 +23,28 @@ local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 local RIFT_PATH = workspace.Rendered.Rifts
 
--- =============================================
--- UTILITY FUNCTIONS
--- =============================================
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
 local function isRiftLuckValid(riftInstance)
-    if not getgenv().LUCK_25X_ONLY_MODE then return true end
-    local luckIsValid = false
-    pcall(function()
-        if riftInstance.Display.Icon.Luck.Text == "x25" then luckIsValid = true end
-    end)
-    if not luckIsValid then print("Found rift "..riftInstance.Name..", but ignoring it due to non-x25 luck.") end
-    return luckIsValid
+    if not getgenv().LUCK_25X_ONLY_MODE then
+        return true
+    end
+
+    local luckLabel = riftInstance.Display:WaitForChild("Icon", 0.5) and riftInstance.Display.Icon:WaitForChild("Luck", 0.5)
+
+    if not luckLabel then
+        print("Could not find Luck label for "..riftInstance.Name..". Assuming invalid.")
+        return false
+    end
+
+    local luckText = luckLabel.Text
+    if string.find(luckText, "25") then
+        return true
+    else
+        print("Found rift "..riftInstance.Name..", but luck is '"..luckText.."', not x25. Ignoring.")
+        return false
+    end
 end
 
 local function sendWebhook(targetUrl, payload)
@@ -127,7 +123,7 @@ local function findSafeLandingSpot(riftInstance)
     raycastParams.IgnoreWater = true
     local originalPosition = riftInstance:GetPivot().Position
     local rayOrigin = originalPosition + Vector3.new(0, 100, 0)
-    local rayDirection = Vector3.new(0, -200, 0) 
+    local rayDirection = Vector3.new(0, -200, 0)
     local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
     if rayResult and rayResult.Instance then
         return rayResult.Position + Vector3.new(0, 4, 0)
@@ -175,25 +171,20 @@ local function performAutoHatch()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
--- =============================================
--- MAIN EXECUTION (FINAL VERSION)
--- =============================================
-print("AUTO Script (v53 - Movement Lock) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (v53.1 - Syntax Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
-local isMovingToTarget = false -- The new movement lock flag
+local isMovingToTarget = false
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         task.wait(1)
 
-        -- If a move is already in progress, skip this cycle to let it finish.
         if isMovingToTarget then
             continue
         end
 
-        -- STEP 1: Always scan for a priority rift first.
         local targetRiftInstance = nil
         for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
             local found = RIFT_PATH:FindFirstChild(riftName)
@@ -203,32 +194,26 @@ task.spawn(function()
             end
         end
 
-        -- STEP 2: Decide what to do based on the scan result.
-        
-        -- PRIORITY 1: A VALID RIFT WAS FOUND
         if targetRiftInstance then
             failedSearchCounter = 0
             local safeSpot = findSafeLandingSpot(targetRiftInstance)
 
             if safeSpot and not isNearLocation(safeSpot) then
-                isMovingToTarget = true -- Engage the movement lock
-                
+                isMovingToTarget = true
                 print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
                     local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
                     notifiedAboutRift[targetRiftInstance] = true
                 end
-
-                pcall(function()
-                    teleportToClosestPoint(math.floor(safeSpot.Y))
-                    task.wait(5)
-                    performMovement(safeSpot)
-                end)
                 
-                isMovingToTarget = false -- Release the movement lock
+                teleportToClosestPoint(math.floor(safeSpot.Y))
+                print("Cooldown initiated. Waiting 15 seconds before next action...")
+                task.wait(15)
+                performMovement(safeSpot)
+                isMovingToTarget = false
+
             else
-                -- We are at the rift. Spam the open command.
                 while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
                     local highestPriorityRift = nil
                     for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
@@ -244,20 +229,18 @@ task.spawn(function()
                 end
                 notifiedAboutRift[targetRiftInstance] = nil
             end
-        
-        -- PRIORITY 2: NO VALID RIFT FOUND -> AUTO-HATCH FALLBACK
+
         elseif getgenv().AUTO_HATCH_ENABLED then
             if not isNearLocation(AUTO_HATCH_POSITION) then
-                isMovingToTarget = true -- Engage lock for moving to hatch spot
+                isMovingToTarget = true
                 print("No valid rifts found. Moving to auto-hatch position.")
                 pcall(performMovement, AUTO_HATCH_POSITION)
-                isMovingToTarget = false -- Release lock
+                isMovingToTarget = false
             else
                 performAutoHatch()
                 task.wait()
             end
 
-        -- PRIORITY 3: NO VALID RIFT & NO AUTO-HATCH -> SERVER HOP
         else
             failedSearchCounter = failedSearchCounter + 1
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
