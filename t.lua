@@ -73,12 +73,21 @@ local function simpleServerHop()
             end
             Next = Servers.nextPageCursor
         until Server or not Next
+        
+        local didTeleport = false
         if Server and Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
             print("Found a suitable server with "..Server.playing.." players. Teleporting...")
             TeleportService:TeleportToPlaceInstance(game.PlaceId, Server.id, LocalPlayer)
+            didTeleport = true
         else
             print("Could not find a suitable server via API, falling back to simple hop.")
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            didTeleport = true
+        end
+
+        if didTeleport then
+            print("Teleport initiated. Halting script to prevent errors in this server.")
+            getgenv().AUTO_MODE_ENABLED = false
         end
     end)
 end
@@ -208,7 +217,7 @@ task.spawn(function()
                 end
                 
                 teleportToClosestPoint(math.floor(safeSpot.Y))
-                task.wait(1)
+                task.wait(5)
                 performMovement(safeSpot)
                 print("Arrived at rift. Cooldown initiated for 15 seconds...")
                 task.wait(15)
