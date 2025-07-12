@@ -1,4 +1,4 @@
-wait(20)
+wait(30)
 
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
