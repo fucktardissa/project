@@ -1,7 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
---aaa
+--far
 local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -157,7 +157,7 @@ local function openRift()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
 
-print("AUTO Script (Anti-Cheat Fix) Loaded.")
+print("AUTO Script (Final Version) Loaded.")
 getgenv().isEngagedWithRift = getgenv().isEngagedWithRift or false
 
 task.spawn(function()
@@ -194,17 +194,20 @@ task.spawn(function()
                 performMovement(safeSpot)
             end
             
-            print("Arrived at '"..targetRift.Name.."'. Waiting (anchored) for it to disappear.")
-            repeat task.wait(0.5) until not (targetRift and targetRift.Parent)
+            print("Arrived at '"..targetRift.Name.."'. Restoring character to hatch.")
+            restoreCharacterState() -- Un-anchor immediately upon arrival
             
-            restoreCharacterState()
+            print("Waiting for rift to disappear...")
+            repeat task.wait(0.5) until not (targetRift and targetRift.Parent)
+
+            print("Rift is gone. Resuming search.")
             getgenv().isEngagedWithRift = false
         else
             if not _G.failedSearchCounter then _G.failedSearchCounter = 0 end
             _G.failedSearchCounter = _G.failedSearchCounter + 1
             print("Search " .. _G.failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete.")
             if _G.failedSearchCounter >= MAX_FAILED_SEARCHES then
-                task.wait(1)
+                task.wait(10)
                 simpleServerHop()
                 _G.failedSearchCounter = 0
             end
