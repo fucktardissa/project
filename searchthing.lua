@@ -4,7 +4,7 @@ getgenv().LUCK_25X_ONLY_MODE = true
 -- Configure your targets here
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
-local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
+local SUCCESS_WEBHOOK_URL = ""
 
 -- Services
 local HttpService = game:GetService("HttpService")
