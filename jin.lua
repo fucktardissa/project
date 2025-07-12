@@ -1,10 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
-getgenv().LUCK_25X_ONLY_MODE = true -- This is still used by the new function
-getgenv().ASSUME_VALID_ON_LUCK_FAILURE = true 
-
-
---azuy
+getgenv().LUCK_25X_ONLY_MODE = true
+--fin
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -15,6 +12,7 @@ local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 30
 local PROXIMITY_DISTANCE = 15
+local ENGAGEMENT_COOLDOWN = 15 -- Cooldown in seconds after finishing with a rift
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -30,33 +28,30 @@ local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
 local function findBestAvailableRift()
-    -- Only run the check if the 25x mode is enabled
-    if not getgenv().LUCK_25X_ONLY_MODE then return RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) end
+    if not getgenv().LUCK_25X_ONLY_MODE then
+        if RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) then
+            return RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1])
+        end
+    end
 
     local allRiftsInServer = RIFT_PATH:GetChildren()
-
     for _, riftObject in ipairs(allRiftsInServer) do
-        local luckLabel
         local has25xLuck = false
-        -- Use a pcall to safely check for the luck label without errors
-        local success, err = pcall(function()
-            luckLabel = riftObject.Display.Icon.Luck
-            if string.find(luckLabel.Text, "25") then
+        pcall(function()
+            if string.find(riftObject.Display.Icon.Luck.Text, "25") then
                 has25xLuck = true
             end
         end)
         
-        -- If we found a 25x rift, cross-reference it with our target list
         if has25xLuck then
             for _, targetName in ipairs(RIFT_NAMES_TO_SEARCH) do
                 if riftObject.Name == targetName then
                     print("Found 25x rift '"..riftObject.Name.."' and it matches our target list.")
-                    return riftObject -- This is our target, return the object.
+                    return riftObject
                 end
             end
         end
     end
-    -- If the loop completes without finding a match, return nil
     return nil
 end
 
@@ -193,65 +188,72 @@ local function performAutoHatch()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
-print("AUTO Script (v53.1 - Syntax Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (State Management Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
-local isMovingToTarget = false
+local isEngaged = false -- Renamed for clarity
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         task.wait(1)
 
-        if isMovingToTarget then
+        if isEngaged then
             continue
         end
 
-        -- The main search logic is now just one clean function call
         local targetRiftInstance = findBestAvailableRift()
 
         if targetRiftInstance then
+            -- =================================================================
+            -- START OF UNIFIED ENGAGEMENT BLOCK
+            -- =================================================================
+            isEngaged = true -- Set the lock IMMEDIATELY
             failedSearchCounter = 0
-            local safeSpot = findSafeLandingSpot(targetRiftInstance)
+            
+            if not notifiedAboutRift[targetRiftInstance] then
+                print("New valid rift "..targetRiftInstance.Name.." located. Engaging.")
+                local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+                sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
+                notifiedAboutRift[targetRiftInstance] = true
+            end
 
+            local safeSpot = findSafeLandingSpot(targetRiftInstance)
             if safeSpot and not isNearLocation(safeSpot) then
-                isMovingToTarget = true
-                print("Valid Rift "..targetRiftInstance.Name.." located. Moving to engage.")
-                if not notifiedAboutRift[targetRiftInstance] then
-                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
-                    sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
-                    notifiedAboutRift[targetRiftInstance] = true
-                end
-                
+                print("Player is not near the rift. Moving into position...")
                 teleportToClosestPoint(math.floor(safeSpot.Y))
                 task.wait(5)
                 performMovement(safeSpot)
-                print("Arrived at rift. Cooldown initiated for 15 seconds...")
-                task.wait(15)
-                isMovingToTarget = false
-
-            else
-                while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
-                    local highestPriorityRift = findBestAvailableRift() -- Re-check for a better rift
-                    if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
-                        print("New or higher priority rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
-                        break
-                    end
-                    openRift()
-                    task.wait()
-                end
-                notifiedAboutRift[targetRiftInstance] = nil
             end
+
+            print("Player is near '"..targetRiftInstance.Name.."'. Beginning persistent hatch...")
+            while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
+                local newBestRift = findBestAvailableRift()
+                if newBestRift and newBestRift ~= targetRiftInstance then
+                    print("A new, better rift has appeared ("..newBestRift.Name.."). Breaking engagement.")
+                    break
+                end
+                openRift()
+                task.wait() 
+            end
+
+            print("Engagement with '"..targetRiftInstance.Name.."' has ended. Starting cooldown.")
+            notifiedAboutRift[targetRiftInstance] = nil
+            task.wait(ENGAGEMENT_COOLDOWN)
+            
+            isEngaged = false -- Release the lock ONLY at the very end
+            -- =================================================================
+            -- END OF UNIFIED ENGAGEMENT BLOCK
+            -- =================================================================
 
         elseif getgenv().AUTO_HATCH_ENABLED then
             if not isNearLocation(AUTO_HATCH_POSITION) then
-                isMovingToTarget = true
+                isEngaged = true
                 print("No valid rifts found. Moving to auto-hatch position.")
                 pcall(performMovement, AUTO_HATCH_POSITION)
-                isMovingToTarget = false
+                isEngaged = false
             else
                 performAutoHatch()
-                task.wait()
             end
 
         else
