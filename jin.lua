@@ -1,7 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
-
+--aaa
 local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -26,12 +26,8 @@ local function performMovement(targetPosition)
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not (humanoid and humanoidRootPart) then return end
 
-    local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            originalCollisions[part] = part.CanCollide
-            part.CanCollide = false
-        end
+        if part:IsA("BasePart") then part.CanCollide = false end
     end
     humanoid.PlatformStand = true
     humanoidRootPart.Anchored = true
@@ -47,14 +43,28 @@ local function performMovement(targetPosition)
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play()
     horizontalTween.Completed:Wait()
+end
+
+local function restoreCharacterState()
+    local character = LocalPlayer.Character
+    if not character then return end
     
-    for part, canCollide in pairs(originalCollisions) do
-        if part and part.Parent then
-            part.CanCollide = canCollide
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        humanoidRootPart.Anchored = false
+    end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
         end
     end
-    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-    humanoidRootPart.Anchored = false
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+    print("Character state restored to normal.")
 end
 
 local function findBestAvailableRift()
@@ -64,7 +74,6 @@ local function findBestAvailableRift()
             if rift then return rift end
         end
     end
-
     local allRiftsInServer = RIFT_PATH:GetChildren()
     for _, riftObject in ipairs(allRiftsInServer) do
         local has25xLuck = false
@@ -73,11 +82,9 @@ local function findBestAvailableRift()
                 has25xLuck = true
             end
         end)
-        
         if has25xLuck then
             for _, targetName in ipairs(RIFT_NAMES_TO_SEARCH) do
                 if riftObject.Name == targetName then
-                    print("Found 25x rift '"..riftObject.Name.."' and it matches our target list.")
                     return riftObject
                 end
             end
@@ -150,12 +157,12 @@ local function openRift()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
 
-print("AUTO Script (Dynamic Wait Fix) Loaded.")
+print("AUTO Script (Anti-Cheat Fix) Loaded.")
 getgenv().isEngagedWithRift = getgenv().isEngagedWithRift or false
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
-        openRift() -- Persistent hatcher
+        openRift()
         task.wait()
     end
 end)
@@ -184,16 +191,13 @@ task.spawn(function()
                     timeWaited = timeWaited + 0.2
                 end
                 
-                if timeWaited >= timeout then
-                    warn("Teleport took too long or failed! Movement may not work correctly.")
-                else
-                    print("Teleport confirmed. Proceeding with final movement.")
-                end
-                
                 performMovement(safeSpot)
             end
-            print("Arrived at '"..targetRift.Name.."'. Waiting for it to disappear.")
+            
+            print("Arrived at '"..targetRift.Name.."'. Waiting (anchored) for it to disappear.")
             repeat task.wait(0.5) until not (targetRift and targetRift.Parent)
+            
+            restoreCharacterState()
             getgenv().isEngagedWithRift = false
         else
             if not _G.failedSearchCounter then _G.failedSearchCounter = 0 end
