@@ -202,16 +202,17 @@ task.spawn(function()
                 isMovingToTarget = true
                 print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
-                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND! (jin)", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
                     notifiedAboutRift[targetRiftInstance] = true
                 end
-                pcall(function()
-                    teleportToClosestPoint(math.floor(safeSpot.Y))
-                    task.wait(5)
-                    performMovement(safeSpot)
-                end)
+                
+                teleportToClosestPoint(math.floor(safeSpot.Y))
+                print("Cooldown initiated. Waiting 15 seconds before next action...")
+                task.wait(15)
+                performMovement(safeSpot)
                 isMovingToTarget = false
+
             else
                 while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
                     local highestPriorityRift = nil
