@@ -1,7 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
---adgvag
+--adgvagsadfasfasfsa
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -208,8 +208,8 @@ task.spawn(function()
                 end
                 
                 teleportToClosestPoint(math.floor(safeSpot.Y))
-                print("Cooldown initiated. Waiting 15 seconds before next action...")
-                task.wait(15)
+                print("Cooldown initiated. Waiting 40 seconds before next action...")
+                task.wait(40)
                 performMovement(safeSpot)
                 isMovingToTarget = false
 
