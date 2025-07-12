@@ -1,17 +1,17 @@
-getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
-getgenv().AUTO_HATCH_ENABLED = false -- Set to true to enable the auto-hatch fallback routine
-getgenv().LUCK_25X_ONLY_MODE = false -- NEW: Set to true to only engage with x25 luck rifts
---asiuodfhjsaofjhaosf
-local RIFT_NAMES_TO_SEARCH = {"spikey-egg", "festival-rift-3",  "festival-rift-2"}
-local MAX_FAILED_SEARCHES = 3 -- Number of times to search before server hopping (if auto-hatch is off)
-local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5) -- The position for the auto-hatch fallback
+getgenv().AUTO_MODE_ENABLED = true
+getgenv().AUTO_HATCH_ENABLED = false
+getgenv().LUCK_25X_ONLY_MODE = true
+
+local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
+local MAX_FAILED_SEARCHES = 3
+local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
 
 local SUCCESS_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local FAILURE_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1391330776389259354/8W3Cphb1Lz_EPYiRKeqqt1FtqyhIvXPmgfRmCtjUQtX6eRO7-FuvKAVvNirx4AizKfNN"
 local EGG_THUMBNAIL_URL = "https://www.bgsi.gg/eggs/july4th-egg.png"
 local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 30
-local PROXIMITY_DISTANCE = 15 -- How close to be to a target to be considered "near"
+local PROXIMITY_DISTANCE = 15
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -208,9 +208,10 @@ task.spawn(function()
                 end
                 
                 teleportToClosestPoint(math.floor(safeSpot.Y))
-                print("Cooldown initiated. Waiting 40 seconds before next action...")
-                task.wait(40)
+                task.wait(1)
                 performMovement(safeSpot)
+                print("Arrived at rift. Cooldown initiated for 15 seconds...")
+                task.wait(15)
                 isMovingToTarget = false
 
             else
