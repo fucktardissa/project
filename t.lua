@@ -1,17 +1,18 @@
 --[[
-    Validator & Reporter Script (v50 - Spam Hatching)
-    - Final version incorporating all previous fixes and features.
-    - When at a rift, it will now enter a rapid loop to "spam" the open command.
-    - This spam loop will intelligently break if the rift disappears or a higher-priority one spawns.
+    Validator & Reporter Script (v51 - 25x Luck Filter)
+    - Added LUCK_25X_ONLY_MODE toggle.
+    - When enabled, the script will check the luck value of a found rift.
+    - It will only engage with the rift if the luck is "x25", otherwise it will ignore it.
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
-getgenv().AUTO_HATCH_ENABLED = true -- Set to true to enable the auto-hatch fallback routine
+getgenv().AUTO_HATCH_ENABLED = false -- Set to true to enable the auto-hatch fallback routine
+getgenv().LUCK_25X_ONLY_MODE = false -- NEW: Set to true to only engage with x25 luck rifts
 
-local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "festival-rift-2", "festival-rift-1"}
+local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3 -- Number of times to search before server hopping (if auto-hatch is off)
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5) -- The position for the auto-hatch fallback
 
@@ -40,6 +41,29 @@ local RIFT_PATH = workspace.Rendered.Rifts
 -- =============================================
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
+
+-- NEW FUNCTION TO CHECK RIFT LUCK
+local function isRiftLuckValid(riftInstance)
+    -- If the mode is off, any rift is valid.
+    if not getgenv().LUCK_25X_ONLY_MODE then
+        return true
+    end
+
+    -- If the mode is on, check for "x25"
+    local luckIsValid = false
+    pcall(function()
+        local luckLabel = riftInstance.Display.Icon.Luck
+        if luckLabel.Text == "x25" then
+            luckIsValid = true
+        end
+    end)
+    
+    if not luckIsValid then
+        print("Found rift "..riftInstance.Name..", but ignoring it due to non-x25 luck.")
+    end
+    
+    return luckIsValid
+end
 
 local function sendWebhook(targetUrl, payload)
     local now = tick()
@@ -113,32 +137,53 @@ local function performMovement(targetPosition)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not (humanoid and humanoidRootPart) then error("Movement failed: Character parts not found.") end
+
+    -- Disable collisions and physics
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide; part.CanCollide = false; end end
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
+
+    -- Perform vertical movement
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     verticalTween:Play(); verticalTween.Completed:Wait()
+
+    -- Perform horizontal movement
     local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play(); horizontalTween.Completed:Wait()
+
+    -- =================================================================
+    -- NEW FIX: Anchor the character before re-enabling physics
+    -- =================================================================
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+    humanoidRootPart.Anchored = true -- Lock the character in the final position
+
+    -- Now, safely re-enable everything
     humanoid.PlatformStand = originalPlatformStand
-    for part, canCollide in pairs(originalCollisions) do if part and part.Parent then part.CanCollide = canCollide; end end
+    for part, canCollide in pairs(originalCollisions) do
+        if part and part.Parent then part.CanCollide = canCollide; end
+    end
+    
+    -- Tell the humanoid it's on the ground and let physics settle
+    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+    task.wait(0.1)
+
+    -- Finally, release the anchor so the player can move normally
+    humanoidRootPart.Anchored = false
+    -- =================================================================
 end
 
 local function openRift()
-    -- This is a single key press action
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
 
 local function performAutoHatch()
-    -- This is a single key press action for the fallback hatch
     -- NOTE: You may need to change Enum.KeyCode.E to your game's hatch key
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
     task.wait(0.1)
@@ -148,7 +193,7 @@ end
 -- =============================================
 -- MAIN EXECUTION (FINAL VERSION)
 -- =============================================
-print("AUTO Script (v50 - Spam Hatching) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (v51 - 25x Luck Filter) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
@@ -159,22 +204,22 @@ task.spawn(function()
         local targetRiftInstance = nil
         for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
             local found = RIFT_PATH:FindFirstChild(riftName)
-            if found then
+            -- Check if it exists AND if its luck is valid before setting it as the target
+            if found and isRiftLuckValid(found) then
                 targetRiftInstance = found
-                break -- Found the highest priority rift, stop searching.
+                break
             end
         end
 
         -- STEP 2: Decide what to do based on the scan result.
         
-        -- PRIORITY 1: A RIFT WAS FOUND
+        -- PRIORITY 1: A VALID RIFT WAS FOUND
         if targetRiftInstance then
-            failedSearchCounter = 0 -- Reset counter since we found a rift
+            failedSearchCounter = 0
             local safeSpot = findSafeLandingSpot(targetRiftInstance)
 
             if safeSpot and not isNearLocation(safeSpot) then
-                -- Move to the rift if we are not already there.
-                print("Rift "..targetRiftInstance.Name.." located. Moving to engage.")
+                print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
                     local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
@@ -184,52 +229,55 @@ task.spawn(function()
                 task.wait(5)
                 performMovement(safeSpot)
             else
-                -- We are at the rift. Begin the spam-hatching loop.
                 print("Engaged with " .. targetRiftInstance.Name .. ". Spamming open command.")
                 
                 while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
-                    -- Re-scan to check for higher-priority rifts that may have spawned.
-                    local highestPriorityRift = RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) or RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[2]) or RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[3])
-
-                    -- If a new, higher-priority rift appeared, break this loop to go after it.
+                    local highestPriorityRift = nil
+                    for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
+                        local found = RIFT_PATH:FindFirstChild(riftName)
+                        if found and isRiftLuckValid(found) then
+                            highestPriorityRift = found
+                            break
+                        end
+                    end
+                    
                     if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
-                        print("New or higher priority rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
+                        print("New or higher priority x25 rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
                         break
                     end
                     
                     openRift()
-                    task.wait() -- Use a minimal wait to prevent freezing, much faster than task.wait(1)
+                    task.wait()
                 end
                 
                 print("Engagement with " .. targetRiftInstance.Name .. " has ended.")
-                notifiedAboutRift[targetRiftInstance] = nil -- Allow re-notification if it appears again
+                notifiedAboutRift[targetRiftInstance] = nil
             end
         
-        -- PRIORITY 2: NO RIFT FOUND -> AUTO-HATCH FALLBACK
+        -- PRIORITY 2: NO VALID RIFT FOUND -> AUTO-HATCH FALLBACK
         elseif getgenv().AUTO_HATCH_ENABLED then
             notifiedAboutRift = {}
             if not isNearLocation(AUTO_HATCH_POSITION) then
-                print("No rifts found. Moving to auto-hatch position.")
+                print("No valid rifts found. Moving to auto-hatch position.")
                 performMovement(AUTO_HATCH_POSITION)
             else
-                -- At the hatching spot, spam the hatch key in a rapid loop
                 print("At auto-hatch position. Spamming hatch command.")
                 performAutoHatch()
-                task.wait() -- Minimal wait while auto-hatching at base
+                task.wait()
             end
 
-        -- PRIORITY 3: NO RIFT & NO AUTO-HATCH -> SERVER HOP
+        -- PRIORITY 3: NO VALID RIFT & NO AUTO-HATCH -> SERVER HOP
         else
             notifiedAboutRift = {}
             failedSearchCounter = failedSearchCounter + 1
-            print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No rift found.")
+            print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
                 simpleServerHop()
                 failedSearchCounter = 0
             end
         end
         
-        task.wait(1) -- A 1-second delay between major state checks to prevent overly aggressive scanning.
+        task.wait(1)
     end
     print("AUTO script stopped because toggle was set to false.")
 end)
