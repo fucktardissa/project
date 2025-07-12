@@ -1,13 +1,9 @@
 --[[
-    Validator & Reporter Script (v51 - 25x Luck Filter)
-    - Added LUCK_25X_ONLY_MODE toggle.
-    - When enabled, the script will check the luck value of a found rift.
-    - It will only engage with the rift if the luck is "x25", otherwise it will ignore it.
+    Validator & Reporter Script (v52 - Advanced Server Hop)
+    - Replaced the simple server hop with a more advanced method using the Roblox API.
+    - The script now fetches a list of public servers and joins a specific one to ensure a fresh session.
 ]]
 
--- =============================================
--- CONFIGURATION (Edit These Values)
--- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
 getgenv().AUTO_HATCH_ENABLED = false -- Set to true to enable the auto-hatch fallback routine
 getgenv().LUCK_25X_ONLY_MODE = false -- NEW: Set to true to only engage with x25 luck rifts
@@ -42,26 +38,13 @@ local RIFT_PATH = workspace.Rendered.Rifts
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
--- NEW FUNCTION TO CHECK RIFT LUCK
 local function isRiftLuckValid(riftInstance)
-    -- If the mode is off, any rift is valid.
-    if not getgenv().LUCK_25X_ONLY_MODE then
-        return true
-    end
-
-    -- If the mode is on, check for "x25"
+    if not getgenv().LUCK_25X_ONLY_MODE then return true end
     local luckIsValid = false
     pcall(function()
-        local luckLabel = riftInstance.Display.Icon.Luck
-        if luckLabel.Text == "x25" then
-            luckIsValid = true
-        end
+        if riftInstance.Display.Icon.Luck.Text == "x25" then luckIsValid = true end
     end)
-    
-    if not luckIsValid then
-        print("Found rift "..riftInstance.Name..", but ignoring it due to non-x25 luck.")
-    end
-    
+    if not luckIsValid then print("Found rift "..riftInstance.Name..", but ignoring it due to non-x25 luck.") end
     return luckIsValid
 end
 
@@ -75,10 +58,35 @@ local function sendWebhook(targetUrl, payload)
     end)
 end
 
+-- UPDATED with your advanced server hopping logic
 local function simpleServerHop()
-    print("No rifts found after " .. MAX_FAILED_SEARCHES .. " searches. Hopping to a new server...")
+    print("No valid rifts found. Using advanced server hop to find a new server...")
+
     pcall(function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        local ServersURL = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        local Server, Next = nil, nil
+        
+        local function ListServers(cursor)
+            local Raw = game:HttpGet(ServersURL .. ((cursor and "&cursor=" .. cursor) or ""))
+            return HttpService:JSONDecode(Raw)
+        end
+
+        repeat
+            local Servers = ListServers(Next)
+            if #Servers.data > 0 then
+                -- Pick a random server from the first third of the list to increase chances of finding a fresher server
+                Server = Servers.data[math.random(1, math.max(1, math.floor(#Servers.data / 3)))]
+            end
+            Next = Servers.nextPageCursor
+        until Server or not Next
+
+        if Server and Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
+            print("Found a suitable server with "..Server.playing.." players. Teleporting...")
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, Server.id, LocalPlayer)
+        else
+            print("Could not find a suitable server via API, falling back to simple hop.")
+            TeleportService:Teleport(game.PlaceId, LocalPlayer) -- Fallback just in case
+        end
     end)
 end
 
@@ -113,7 +121,7 @@ local function teleportToClosestPoint(targetHeight)
 end
 
 local function findSafeLandingSpot(riftInstance)
-    print("Finding a safe landing spot using a whitelisted raycast...")
+    print("Finding a safe landing spot...")
     local islandModel = riftInstance.Parent
     if not islandModel then warn("Could not find parent model of the rift.") return nil end
     local raycastParams = RaycastParams.new()
@@ -137,44 +145,25 @@ local function performMovement(targetPosition)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not (humanoid and humanoidRootPart) then error("Movement failed: Character parts not found.") end
-
-    -- Disable collisions and physics
     local originalCollisions = {}
     for _, part in ipairs(character:GetDescendants()) do if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide; part.CanCollide = false; end end
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
-
-    -- Perform vertical movement
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
     verticalTween:Play(); verticalTween.Completed:Wait()
-
-    -- Perform horizontal movement
     local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
     horizontalTween:Play(); horizontalTween.Completed:Wait()
-
-    -- =================================================================
-    -- NEW FIX: Anchor the character before re-enabling physics
-    -- =================================================================
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
-    humanoidRootPart.Anchored = true -- Lock the character in the final position
-
-    -- Now, safely re-enable everything
+    humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
-    for part, canCollide in pairs(originalCollisions) do
-        if part and part.Parent then part.CanCollide = canCollide; end
-    end
-    
-    -- Tell the humanoid it's on the ground and let physics settle
+    for part, canCollide in pairs(originalCollisions) do if part and part.Parent then part.CanCollide = canCollide; end end
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
     task.wait(0.1)
-
-    -- Finally, release the anchor so the player can move normally
     humanoidRootPart.Anchored = false
-    -- =================================================================
 end
 
 local function openRift()
@@ -193,18 +182,18 @@ end
 -- =============================================
 -- MAIN EXECUTION (FINAL VERSION)
 -- =============================================
-print("AUTO Script (v51 - 25x Luck Filter) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (v52 - Advanced Server Hop) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
+        task.wait(1)
         -- STEP 1: Always scan for a priority rift first.
         local targetRiftInstance = nil
         for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
             local found = RIFT_PATH:FindFirstChild(riftName)
-            -- Check if it exists AND if its luck is valid before setting it as the target
             if found and isRiftLuckValid(found) then
                 targetRiftInstance = found
                 break
@@ -276,8 +265,6 @@ task.spawn(function()
                 failedSearchCounter = 0
             end
         end
-        
-        task.wait(1)
     end
     print("AUTO script stopped because toggle was set to false.")
 end)
