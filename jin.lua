@@ -1,7 +1,7 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
 getgenv().LUCK_25X_ONLY_MODE = true
---adgvagsadfasfasfsa
+
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -73,12 +73,21 @@ local function simpleServerHop()
             end
             Next = Servers.nextPageCursor
         until Server or not Next
+        
+        local didTeleport = false
         if Server and Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
             print("Found a suitable server with "..Server.playing.." players. Teleporting...")
             TeleportService:TeleportToPlaceInstance(game.PlaceId, Server.id, LocalPlayer)
+            didTeleport = true
         else
             print("Could not find a suitable server via API, falling back to simple hop.")
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            didTeleport = true
+        end
+
+        if didTeleport then
+            print("Teleport initiated. Halting script to prevent errors in this server.")
+            getgenv().AUTO_MODE_ENABLED = false
         end
     end)
 end
@@ -202,15 +211,16 @@ task.spawn(function()
                 isMovingToTarget = true
                 print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
-                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND! (jin)", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
+                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
                     notifiedAboutRift[targetRiftInstance] = true
                 end
                 
                 teleportToClosestPoint(math.floor(safeSpot.Y))
-                print("Cooldown initiated. Waiting 40 seconds before next action...")
-                task.wait(40)
+                task.wait(5)
                 performMovement(safeSpot)
+                print("Arrived at rift. Cooldown initiated for 15 seconds...")
+                task.wait(15)
                 isMovingToTarget = false
 
             else
