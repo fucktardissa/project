@@ -1,18 +1,17 @@
 --[[
-    Validator & Reporter Script (v49 - Auto-Hatch Fallback)
-    - Added AUTO_HATCH_ENABLED toggle.
-    - If no rifts are found and toggle is true, script will move to a set location and auto-hatch.
-    - While auto-hatching, it continues to scan for rifts and will engage immediately if one is found.
-    - If auto-hatch is disabled, it will revert to server hopping after failed searches.
+    Validator & Reporter Script (v50 - Spam Hatching)
+    - Final version incorporating all previous fixes and features.
+    - When at a rift, it will now enter a rapid loop to "spam" the open command.
+    - This spam loop will intelligently break if the rift disappears or a higher-priority one spawns.
 ]]
 
 -- =============================================
 -- CONFIGURATION (Edit These Values)
 -- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
-getgenv().AUTO_HATCH_ENABLED = true -- NEW: Set to true to enable the auto-hatch fallback routine
+getgenv().AUTO_HATCH_ENABLED = true -- Set to true to enable the auto-hatch fallback routine
 
-local RIFT_NAMES_TO_SEARCH = {"spikey-egg", "festival-rift-3", "festival-rift-2", "festival-rift-1"}
+local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "festival-rift-2", "festival-rift-1"}
 local MAX_FAILED_SEARCHES = 3 -- Number of times to search before server hopping (if auto-hatch is off)
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5) -- The position for the auto-hatch fallback
 
@@ -132,15 +131,14 @@ local function performMovement(targetPosition)
 end
 
 local function openRift()
-    print("Attempting to open special rift...")
+    -- This is a single key press action
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
 
--- NEW FUNCTION FOR THE FALLBACK HATCHING
 local function performAutoHatch()
-    print("Performing auto-hatch action at base...")
+    -- This is a single key press action for the fallback hatch
     -- NOTE: You may need to change Enum.KeyCode.E to your game's hatch key
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
     task.wait(0.1)
@@ -148,9 +146,9 @@ local function performAutoHatch()
 end
 
 -- =============================================
--- MAIN EXECUTION (RESTRUCTURED)
+-- MAIN EXECUTION (FINAL VERSION)
 -- =============================================
-print("AUTO Script (v49 - Auto-Hatch) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (v50 - Spam Hatching) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
@@ -175,8 +173,8 @@ task.spawn(function()
             local safeSpot = findSafeLandingSpot(targetRiftInstance)
 
             if safeSpot and not isNearLocation(safeSpot) then
+                -- Move to the rift if we are not already there.
                 print("Rift "..targetRiftInstance.Name.." located. Moving to engage.")
-                -- Send webhook notification only once per rift instance
                 if not notifiedAboutRift[targetRiftInstance] then
                     local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
@@ -186,25 +184,38 @@ task.spawn(function()
                 task.wait(5)
                 performMovement(safeSpot)
             else
-                -- We are already near the rift, just keep opening it.
-                if not targetRiftInstance.Parent then
-                    print("Rift has disappeared.")
-                    notifiedAboutRift[targetRiftInstance] = nil -- Allow re-notification if it returns
-                else
-                    print("Already at rift "..targetRiftInstance.Name..". Continuing to open.")
+                -- We are at the rift. Begin the spam-hatching loop.
+                print("Engaged with " .. targetRiftInstance.Name .. ". Spamming open command.")
+                
+                while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
+                    -- Re-scan to check for higher-priority rifts that may have spawned.
+                    local highestPriorityRift = RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) or RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[2]) or RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[3])
+
+                    -- If a new, higher-priority rift appeared, break this loop to go after it.
+                    if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
+                        print("New or higher priority rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
+                        break
+                    end
+                    
                     openRift()
+                    task.wait() -- Use a minimal wait to prevent freezing, much faster than task.wait(1)
                 end
+                
+                print("Engagement with " .. targetRiftInstance.Name .. " has ended.")
+                notifiedAboutRift[targetRiftInstance] = nil -- Allow re-notification if it appears again
             end
         
         -- PRIORITY 2: NO RIFT FOUND -> AUTO-HATCH FALLBACK
         elseif getgenv().AUTO_HATCH_ENABLED then
-            notifiedAboutRift = {} -- Clear notifications since no rifts exist
+            notifiedAboutRift = {}
             if not isNearLocation(AUTO_HATCH_POSITION) then
                 print("No rifts found. Moving to auto-hatch position.")
                 performMovement(AUTO_HATCH_POSITION)
             else
-                -- We are at the hatching spot, perform the hatch action
+                -- At the hatching spot, spam the hatch key in a rapid loop
+                print("At auto-hatch position. Spamming hatch command.")
                 performAutoHatch()
+                task.wait() -- Minimal wait while auto-hatching at base
             end
 
         -- PRIORITY 3: NO RIFT & NO AUTO-HATCH -> SERVER HOP
@@ -214,11 +225,11 @@ task.spawn(function()
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
                 simpleServerHop()
-                failedSearchCounter = 0 -- Reset after hopping
+                failedSearchCounter = 0
             end
         end
         
-        task.wait(1) -- A short delay in the main loop to prevent excessive CPU usage.
+        task.wait(1) -- A 1-second delay between major state checks to prevent overly aggressive scanning.
     end
     print("AUTO script stopped because toggle was set to false.")
 end)
