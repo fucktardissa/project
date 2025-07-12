@@ -12,7 +12,7 @@
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
 getgenv().AUTO_HATCH_ENABLED = true -- NEW: Set to true to enable the auto-hatch fallback routine
 
-local RIFT_NAMES_TO_SEARCH = {"festival-rift-3", "festival-rift-2", "festival-rift-1"}
+local RIFT_NAMES_TO_SEARCH = {"spikey-egg", "festival-rift-3", "festival-rift-2", "festival-rift-1"}
 local MAX_FAILED_SEARCHES = 3 -- Number of times to search before server hopping (if auto-hatch is off)
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5) -- The position for the auto-hatch fallback
 
