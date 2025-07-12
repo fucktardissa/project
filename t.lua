@@ -1,6 +1,6 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
-getgenv().LUCK_25X_ONLY_MODE = true
+getgenv().LUCK_25X_ONLY_MODE = false
 --hiihhiihihih
 local RIFT_NAMES_TO_SEARCH = {"spikey-egg", "festival-rift-3", "festival-rift-2"}
 local MAX_FAILED_SEARCHES = 3
