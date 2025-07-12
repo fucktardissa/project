@@ -1,9 +1,12 @@
 --[[
-    Validator & Reporter Script (v52 - Advanced Server Hop)
-    - Replaced the simple server hop with a more advanced method using the Roblox API.
-    - The script now fetches a list of public servers and joins a specific one to ensure a fresh session.
+    Validator & Reporter Script (v53 - Movement Lock)
+    - Added a state lock (isMovingToTarget) to prevent the engagement sequence from firing multiple times.
+    - This fixes the issue of spammed console messages and overlapping/broken tweens.
 ]]
 
+-- =============================================
+-- CONFIGURATION (Edit These Values)
+-- =============================================
 getgenv().AUTO_MODE_ENABLED = true -- Set to false in your executor to stop the script
 getgenv().AUTO_HATCH_ENABLED = false -- Set to true to enable the auto-hatch fallback routine
 getgenv().LUCK_25X_ONLY_MODE = false -- NEW: Set to true to only engage with x25 luck rifts
@@ -58,34 +61,28 @@ local function sendWebhook(targetUrl, payload)
     end)
 end
 
--- UPDATED with your advanced server hopping logic
 local function simpleServerHop()
     print("No valid rifts found. Using advanced server hop to find a new server...")
-
     pcall(function()
         local ServersURL = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
         local Server, Next = nil, nil
-        
         local function ListServers(cursor)
             local Raw = game:HttpGet(ServersURL .. ((cursor and "&cursor=" .. cursor) or ""))
             return HttpService:JSONDecode(Raw)
         end
-
         repeat
             local Servers = ListServers(Next)
             if #Servers.data > 0 then
-                -- Pick a random server from the first third of the list to increase chances of finding a fresher server
                 Server = Servers.data[math.random(1, math.max(1, math.floor(#Servers.data / 3)))]
             end
             Next = Servers.nextPageCursor
         until Server or not Next
-
         if Server and Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
             print("Found a suitable server with "..Server.playing.." players. Teleporting...")
             TeleportService:TeleportToPlaceInstance(game.PlaceId, Server.id, LocalPlayer)
         else
             print("Could not find a suitable server via API, falling back to simple hop.")
-            TeleportService:Teleport(game.PlaceId, LocalPlayer) -- Fallback just in case
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
         end
     end)
 end
@@ -173,7 +170,6 @@ local function openRift()
 end
 
 local function performAutoHatch()
-    -- NOTE: You may need to change Enum.KeyCode.E to your game's hatch key
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
@@ -182,14 +178,21 @@ end
 -- =============================================
 -- MAIN EXECUTION (FINAL VERSION)
 -- =============================================
-print("AUTO Script (v52 - Advanced Server Hop) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (v53 - Movement Lock) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
 local notifiedAboutRift = {}
+local isMovingToTarget = false -- The new movement lock flag
 
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         task.wait(1)
+
+        -- If a move is already in progress, skip this cycle to let it finish.
+        if isMovingToTarget then
+            continue
+        end
+
         -- STEP 1: Always scan for a priority rift first.
         local targetRiftInstance = nil
         for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
@@ -208,56 +211,54 @@ task.spawn(function()
             local safeSpot = findSafeLandingSpot(targetRiftInstance)
 
             if safeSpot and not isNearLocation(safeSpot) then
+                isMovingToTarget = true -- Engage the movement lock
+                
                 print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
                     local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
                     notifiedAboutRift[targetRiftInstance] = true
                 end
-                teleportToClosestPoint(math.floor(safeSpot.Y))
-                task.wait(5)
-                performMovement(safeSpot)
-            else
-                print("Engaged with " .. targetRiftInstance.Name .. ". Spamming open command.")
+
+                pcall(function()
+                    teleportToClosestPoint(math.floor(safeSpot.Y))
+                    task.wait(5)
+                    performMovement(safeSpot)
+                end)
                 
+                isMovingToTarget = false -- Release the movement lock
+            else
+                -- We are at the rift. Spam the open command.
                 while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
                     local highestPriorityRift = nil
                     for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
                         local found = RIFT_PATH:FindFirstChild(riftName)
-                        if found and isRiftLuckValid(found) then
-                            highestPriorityRift = found
-                            break
-                        end
+                        if found and isRiftLuckValid(found) then highestPriorityRift = found; break; end
                     end
-                    
                     if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
                         print("New or higher priority x25 rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
                         break
                     end
-                    
                     openRift()
                     task.wait()
                 end
-                
-                print("Engagement with " .. targetRiftInstance.Name .. " has ended.")
                 notifiedAboutRift[targetRiftInstance] = nil
             end
         
         -- PRIORITY 2: NO VALID RIFT FOUND -> AUTO-HATCH FALLBACK
         elseif getgenv().AUTO_HATCH_ENABLED then
-            notifiedAboutRift = {}
             if not isNearLocation(AUTO_HATCH_POSITION) then
+                isMovingToTarget = true -- Engage lock for moving to hatch spot
                 print("No valid rifts found. Moving to auto-hatch position.")
-                performMovement(AUTO_HATCH_POSITION)
+                pcall(performMovement, AUTO_HATCH_POSITION)
+                isMovingToTarget = false -- Release lock
             else
-                print("At auto-hatch position. Spamming hatch command.")
                 performAutoHatch()
                 task.wait()
             end
 
         -- PRIORITY 3: NO VALID RIFT & NO AUTO-HATCH -> SERVER HOP
         else
-            notifiedAboutRift = {}
             failedSearchCounter = failedSearchCounter + 1
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
