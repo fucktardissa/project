@@ -4,7 +4,6 @@ getgenv().LUCK_25X_ONLY_MODE = true
 -- Configure your targets here
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
-local SUCCESS_WEBHOOK_URL = ""
 
 -- Services
 local HttpService = game:GetService("HttpService")
@@ -40,11 +39,6 @@ local function findBestAvailableRift()
     return nil
 end
 
--- Webhook function
-local function sendWebhook(targetUrl, payload)
-    pcall(function() HttpService:RequestAsync({ Url = targetUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload) }) end)
-end
-
 -- Server Hop function
 local function simpleServerHop()
     print("No valid rifts found. Hopping...")
@@ -61,31 +55,44 @@ local function simpleServerHop()
     end)
 end
 
-print("AUTO Rift Finder Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
-
--- Global lock to prevent race conditions
-getgenv().isEngagedWithRift = getgenv().isEngagedWithRift or false
+print("Rift Finder & Loader Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 -- Main Logic Loop
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
-        task.wait(1)
-        if getgenv().isEngagedWithRift then continue end
+        task.wait(2) -- Check every 2 seconds
 
         local targetRift = findBestAvailableRift()
         if targetRift then
-            getgenv().isEngagedWithRift = true
+            -- =================================================================
+            -- TARGET FOUND - EXECUTING YOUR SCRIPT
+            -- =================================================================
+            print("FOUND TARGET: " .. targetRift.Name .. ". Loading main script...")
             
-            print("FOUND TARGET: " .. targetRift.Name .. ". Sending notification and waiting for it to disappear.")
-            sendWebhook(SUCCESS_WEBHOOK_URL, {content = "Found a valid rift: **" .. targetRift.Name .. "** in server: `" .. game.JobId .. "`"})
-            
-            -- This simple loop just waits until the rift is gone
-            repeat
-                task.wait(1)
-            until not (targetRift and targetRift.Parent)
+            -- Stop this script's loops to prevent conflicts
+            getgenv().AUTO_MODE_ENABLED = false
 
-            print("Target " .. targetRift.Name .. " is gone. Resuming search.")
-            getgenv().isEngagedWithRift = false
+            -- Configure settings for the new script
+            getgenv().boardSettings = {
+                UseGoldenDice = true,
+                GoldenDiceDistance = 1,
+                DiceDistance = 6,
+                GiantDiceDistance = 10,
+            }
+            getgenv().remainingItems = {} 
+
+            -- Load and run the main script from GitHub
+            -- Wrapped in a pcall to prevent errors if GitHub is down
+            local success, err = pcall(function()
+                loadstring(game:HttpGet("https://raw.githubusercontent.com/IdiotHub/Scripts/refs/heads/main/BGSI/main.lua"))()
+            end)
+
+            if not success then
+                warn("Failed to load the main script from GitHub: " .. tostring(err))
+            end
+            
+            -- This finder script will now go idle.
+            break 
         else
             if not _G.failedSearchCounter then _G.failedSearchCounter = 0 end
             _G.failedSearchCounter = _G.failedSearchCounter + 1
@@ -97,4 +104,5 @@ task.spawn(function()
             end
         end
     end
+    print("Rift Finder script has handed over control and is now stopped.")
 end)
