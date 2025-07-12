@@ -150,31 +150,64 @@ local function findSafeLandingSpot(riftInstance)
 end
 
 local function performMovement(targetPosition)
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not (humanoid and humanoidRootPart) then error("Movement failed: Character parts not found.") end
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
+
+    if not (humanoid and humanoidRootPart and camera) then
+        error("Movement failed: Character parts or camera not found.")
+    end
+
+    local originalCameraType = camera.CameraType
+    camera.CameraType = Enum.CameraType.Scriptable
+
+    local cameraConnection = RunService.RenderStepped:Connect(function()
+        local lookAtPosition = humanoidRootPart.Position + Vector3.new(0, 2, 0)
+        local cameraPosition = lookAtPosition + Vector3.new(0, 5, 20)
+        camera.CFrame = CFrame.new(cameraPosition, lookAtPosition)
+    end)
+
     local originalCollisions = {}
-    for _, part in ipairs(character:GetDescendants()) do if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide; part.CanCollide = false; end end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide; part.CanCollide = false; end
+    end
     local originalPlatformStand = humanoid.PlatformStand
     humanoid.PlatformStand = true
+
+    -- =================================================================
+    -- THE FIX: Anchor the part BEFORE the tweens start.
+    -- =================================================================
+    humanoidRootPart.Anchored = true
+
     local startPos = humanoidRootPart.Position
     local intermediatePos = CFrame.new(startPos.X, targetPosition.Y, startPos.Z)
+
     local verticalTime = (startPos - intermediatePos.Position).Magnitude / VERTICAL_SPEED
     local verticalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(verticalTime, Enum.EasingStyle.Linear), {CFrame = intermediatePos})
-    verticalTween:Play(); verticalTween.Completed:Wait()
+    verticalTween:Play()
+    verticalTween.Completed:Wait()
+
     local horizontalTime = (humanoidRootPart.Position - targetPosition).Magnitude / HORIZONTAL_SPEED
     local horizontalTween = TweenService:Create(humanoidRootPart, TweenInfo.new(horizontalTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPosition)})
-    horizontalTween:Play(); horizontalTween.Completed:Wait()
+    horizontalTween:Play()
+    horizontalTween.Completed:Wait()
+
+    cameraConnection:Disconnect()
+
     humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
-    humanoidRootPart.Anchored = true
     humanoid.PlatformStand = originalPlatformStand
-    for part, canCollide in pairs(originalCollisions) do if part and part.Parent then part.CanCollide = canCollide; end end
+    for part, canCollide in pairs(originalCollisions) do
+        if part and part.Parent then part.CanCollide = canCollide; end
+    end
     humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+    
+    -- Un-anchor the part at the very end to restore normal physics.
     task.wait(0.1)
     humanoidRootPart.Anchored = false
-end
 
+    camera.CameraType = originalCameraType
+end
 local function openRift()
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
     task.wait(0.1)
