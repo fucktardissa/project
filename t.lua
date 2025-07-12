@@ -26,25 +26,32 @@ local RIFT_PATH = workspace.Rendered.Rifts
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
-local function isRiftLuckValid(riftInstance)
+local function findBestAvailableRift()
     if not getgenv().LUCK_25X_ONLY_MODE then
-        return true
+        if RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) then
+            return RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1])
+        end
     end
 
-    local luckLabel = riftInstance.Display:WaitForChild("Icon", 0.5) and riftInstance.Display.Icon:WaitForChild("Luck", 0.5)
-
-    if not luckLabel then
-        print("Could not find Luck label for "..riftInstance.Name..". Assuming invalid.")
-        return false
+    local allRiftsInServer = RIFT_PATH:GetChildren()
+    for _, riftObject in ipairs(allRiftsInServer) do
+        local has25xLuck = false
+        pcall(function()
+            if string.find(riftObject.Display.Icon.Luck.Text, "25") then
+                has25xLuck = true
+            end
+        end)
+        
+        if has25xLuck then
+            for _, targetName in ipairs(RIFT_NAMES_TO_SEARCH) do
+                if riftObject.Name == targetName then
+                    print("Found 25x rift '"..riftObject.Name.."' and it matches our target list.")
+                    return riftObject
+                end
+            end
+        end
     end
-
-    local luckText = luckLabel.Text
-    if string.find(luckText, "25") then
-        return true
-    else
-        print("Found rift "..riftInstance.Name..", but luck is '"..luckText.."', not x25. Ignoring.")
-        return false
-    end
+    return nil
 end
 
 local function sendWebhook(targetUrl, payload)
@@ -180,81 +187,76 @@ local function performAutoHatch()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
-print("AUTO Script (v53.1 - Syntax Fix) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
+print("AUTO Script (Simplified Hatcher) Loaded. To stop, set getgenv().AUTO_MODE_ENABLED = false")
 
 local failedSearchCounter = 0
-local notifiedAboutRift = {}
-local isMovingToTarget = false
+local isEngaged = false
 
+-- =================================================================
+-- PERSISTENT HATCHER (Your Idea)
+-- This runs in the background, constantly trying to open rifts.
+-- =================================================================
+task.spawn(function()
+    print("Persistent hatcher started. It will continuously try to open rifts.")
+    while getgenv().AUTO_MODE_ENABLED do
+        openRift()
+        task.wait() -- A small wait to prevent crashing
+    end
+end)
+
+
+-- =================================================================
+-- MAIN LOGIC LOOP
+-- This now only focuses on finding and moving to rifts.
+-- =================================================================
 task.spawn(function()
     while getgenv().AUTO_MODE_ENABLED do
         task.wait(1)
 
-        if isMovingToTarget then
+        if isEngaged then
             continue
         end
 
-        local targetRiftInstance = nil
-        for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
-            local found = RIFT_PATH:FindFirstChild(riftName)
-            if found and isRiftLuckValid(found) then
-                targetRiftInstance = found
-                break
-            end
-        end
+        local targetRiftInstance = findBestAvailableRift()
 
         if targetRiftInstance then
+            isEngaged = true -- Lock engagement
             failedSearchCounter = 0
+            
             local safeSpot = findSafeLandingSpot(targetRiftInstance)
-
             if safeSpot and not isNearLocation(safeSpot) then
-                isMovingToTarget = true
-                print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
-                if not notifiedAboutRift[targetRiftInstance] then
-                    local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
-                    sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
-                    notifiedAboutRift[targetRiftInstance] = true
-                end
+                print("Found valid rift "..targetRiftInstance.Name..". Moving into position...")
+                sendWebhook(SUCCESS_WEBHOOK_URL, {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}})
                 
                 teleportToClosestPoint(math.floor(safeSpot.Y))
                 task.wait(5)
                 performMovement(safeSpot)
-                print("Arrived at rift. Cooldown initiated for 15 seconds...")
-                task.wait(15)
-                isMovingToTarget = false
-
-            else
-                while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
-                    local highestPriorityRift = nil
-                    for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
-                        local found = RIFT_PATH:FindFirstChild(riftName)
-                        if found and isRiftLuckValid(found) then highestPriorityRift = found; break; end
-                    end
-                    if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
-                        print("New or higher priority x25 rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
-                        break
-                    end
-                    openRift()
-                    task.wait()
-                end
-                notifiedAboutRift[targetRiftInstance] = nil
             end
+
+            print("Arrived at '"..targetRiftInstance.Name.."'. The persistent hatcher will now take over.")
+            
+            -- Wait here until the rift we were targeting is gone
+            repeat task.wait(0.5) until not (targetRiftInstance and targetRiftInstance.Parent)
+            
+            print("Rift '"..targetRiftInstance.Name.."' is gone. Resuming search.")
+            isEngaged = false -- Release the lock
 
         elseif getgenv().AUTO_HATCH_ENABLED then
             if not isNearLocation(AUTO_HATCH_POSITION) then
-                isMovingToTarget = true
+                isEngaged = true
                 print("No valid rifts found. Moving to auto-hatch position.")
                 pcall(performMovement, AUTO_HATCH_POSITION)
-                isMovingToTarget = false
+                isEngaged = false
             else
                 performAutoHatch()
-                task.wait()
             end
 
         else
             failedSearchCounter = failedSearchCounter + 1
             print("Search " .. failedSearchCounter .. "/" .. MAX_FAILED_SEARCHES .. " complete. No valid rift found.")
             if failedSearchCounter >= MAX_FAILED_SEARCHES then
+                print("Max failed searches reached. Waiting 10 seconds before server hopping...")
+                task.wait(10)
                 simpleServerHop()
                 failedSearchCounter = 0
             end
