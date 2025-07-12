@@ -13,7 +13,7 @@ local VERTICAL_SPEED = 300
 local HORIZONTAL_SPEED = 30
 local PROXIMITY_DISTANCE = 15
 local ENGAGEMENT_COOLDOWN = 15 -- Cooldown in seconds after finishing with a rift
-
+wait(10)
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
