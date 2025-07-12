@@ -1,7 +1,10 @@
 getgenv().AUTO_MODE_ENABLED = true
 getgenv().AUTO_HATCH_ENABLED = false
-getgenv().LUCK_25X_ONLY_MODE = true
---ohu;wsrgahiurgaeuhklasrglhukasgerlhukjalshkjeglkhjsagdlhjksgadlkhjgsdlalaskhgb
+getgenv().LUCK_25X_ONLY_MODE = true -- This is still used by the new function
+getgenv().ASSUME_VALID_ON_LUCK_FAILURE = true 
+
+
+--azuy
 local RIFT_NAMES_TO_SEARCH = { "festival-rift-3", "spikey-egg"}
 local MAX_FAILED_SEARCHES = 3
 local AUTO_HATCH_POSITION = Vector3.new(-123, 10, 5)
@@ -26,25 +29,35 @@ local RIFT_PATH = workspace.Rendered.Rifts
 local lastWebhookSendTime = 0
 local WEBHOOK_COOLDOWN = 2
 
-local function isRiftLuckValid(riftInstance)
-    if not getgenv().LUCK_25X_ONLY_MODE then
-        return true
-    end
+local function findBestAvailableRift()
+    -- Only run the check if the 25x mode is enabled
+    if not getgenv().LUCK_25X_ONLY_MODE then return RIFT_PATH:FindFirstChild(RIFT_NAMES_TO_SEARCH[1]) end
 
-    local luckLabel = riftInstance.Display:WaitForChild("Icon", 0.5) and riftInstance.Display.Icon:WaitForChild("Luck", 0.5)
+    local allRiftsInServer = RIFT_PATH:GetChildren()
 
-    if not luckLabel then
-        print("Could not find Luck label for "..riftInstance.Name..". Assuming invalid.")
-        return false
+    for _, riftObject in ipairs(allRiftsInServer) do
+        local luckLabel
+        local has25xLuck = false
+        -- Use a pcall to safely check for the luck label without errors
+        local success, err = pcall(function()
+            luckLabel = riftObject.Display.Icon.Luck
+            if string.find(luckLabel.Text, "25") then
+                has25xLuck = true
+            end
+        end)
+        
+        -- If we found a 25x rift, cross-reference it with our target list
+        if has25xLuck then
+            for _, targetName in ipairs(RIFT_NAMES_TO_SEARCH) do
+                if riftObject.Name == targetName then
+                    print("Found 25x rift '"..riftObject.Name.."' and it matches our target list.")
+                    return riftObject -- This is our target, return the object.
+                end
+            end
+        end
     end
-
-    local luckText = luckLabel.Text
-    if string.find(luckText, "25") then
-        return true
-    else
-        print("Found rift "..riftInstance.Name..", but luck is '"..luckText.."', not x25. Ignoring.")
-        return false
-    end
+    -- If the loop completes without finding a match, return nil
+    return nil
 end
 
 local function sendWebhook(targetUrl, payload)
@@ -194,14 +207,8 @@ task.spawn(function()
             continue
         end
 
-        local targetRiftInstance = nil
-        for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
-            local found = RIFT_PATH:FindFirstChild(riftName)
-            if found and isRiftLuckValid(found) then
-                targetRiftInstance = found
-                break
-            end
-        end
+        -- The main search logic is now just one clean function call
+        local targetRiftInstance = findBestAvailableRift()
 
         if targetRiftInstance then
             failedSearchCounter = 0
@@ -209,7 +216,7 @@ task.spawn(function()
 
             if safeSpot and not isNearLocation(safeSpot) then
                 isMovingToTarget = true
-                print("Valid x25 Rift "..targetRiftInstance.Name.." located. Moving to engage.")
+                print("Valid Rift "..targetRiftInstance.Name.." located. Moving to engage.")
                 if not notifiedAboutRift[targetRiftInstance] then
                     local successPayload = {embeds = {{title = "✅ "..targetRiftInstance.Name.." FOUND!", color = 3066993, thumbnail = {url = EGG_THUMBNAIL_URL}}}}
                     sendWebhook(SUCCESS_WEBHOOK_URL, successPayload)
@@ -225,13 +232,9 @@ task.spawn(function()
 
             else
                 while getgenv().AUTO_MODE_ENABLED and targetRiftInstance and targetRiftInstance.Parent do
-                    local highestPriorityRift = nil
-                    for _, riftName in ipairs(RIFT_NAMES_TO_SEARCH) do
-                        local found = RIFT_PATH:FindFirstChild(riftName)
-                        if found and isRiftLuckValid(found) then highestPriorityRift = found; break; end
-                    end
+                    local highestPriorityRift = findBestAvailableRift() -- Re-check for a better rift
                     if highestPriorityRift and highestPriorityRift ~= targetRiftInstance then
-                        print("New or higher priority x25 rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
+                        print("New or higher priority rift found ("..highestPriorityRift.Name.."). Breaking engagement.")
                         break
                     end
                     openRift()
